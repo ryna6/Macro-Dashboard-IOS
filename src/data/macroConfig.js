@@ -30,7 +30,7 @@ export const macroConfig = {
     {
       id: 'commo',
       kind: 'macro',
-      shortName: 'Commo',
+      shortName: 'Commods',
       longName: 'Commodities',
       symbols: [
         { type: 'stock', symbol: 'USO' },
@@ -42,8 +42,8 @@ export const macroConfig = {
     {
       id: 'rates',
       kind: 'macro',
-      shortName: 'Rates',
-      longName: 'Rates',
+      shortName: 'Bonds',
+      longName: 'US & Corporate Bonds',
       symbols: [
         { type: 'stock', symbol: 'SHY' },
         { type: 'stock', symbol: 'IEF' },
