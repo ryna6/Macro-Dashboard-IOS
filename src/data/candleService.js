@@ -353,7 +353,7 @@ function getDerivedSlot(timeframe) {
 
 export const candleService = {
   /**
-   * Prefetch all symbols for a tab (Global/Metals/Commo/Rates)
+   * Prefetch all symbols for a tab (Global/Metals/Commods/Bonds)
    * - grabs 1m session + 1h(30D)
    * - derives 1D/1W/1M instantly
    */
