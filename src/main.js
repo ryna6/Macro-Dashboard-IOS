@@ -1,20 +1,31 @@
-import { macroConfig } from './data/macroConfig.js';
-import { candleService } from './data/candleService.js';
+// src/main.js
+import './styles/layout.css';
+import './styles/tiles.css';
+import './styles/charts.css';
 
-const FIVE_MIN_MS = 5 * 60 * 1000;
+import { registerSW } from './pwa/registerSW.js';
+import { initTabsApp } from './components/tabs.js';
 
-async function refreshAllMacroTabs(reason = 'auto') {
-  // Refresh tabs 1–4 even if user never visits them
-  const macroTabs = macroConfig.tabs.filter((t) => t.kind === 'macro');
+// Zoom-lock (iOS Safari)
+['gesturestart', 'gesturechange', 'gestureend'].forEach((evt) => {
+  document.addEventListener(evt, (e) => e.preventDefault(), { passive: false });
+});
 
-  await Promise.allSettled(
-    macroTabs.map((tab) => candleService.prefetchTab(tab.id, { reason }))
-  );
+let lastTouchEnd = 0;
+document.addEventListener(
+  'touchend',
+  (e) => {
+    const now = Date.now();
+    if (now - lastTouchEnd <= 300) e.preventDefault();
+    lastTouchEnd = now;
+  },
+  { passive: false }
+);
 
-  // Your UI can now re-render tiles for any tab instantly.
-  // Example (pseudo):
-  // macroTabs.forEach(tab => renderTiles(tab.id));
-}
+registerSW();
 
-refreshAllMacroTabs('startup');
-setInterval(() => refreshAllMacroTabs('timer'), FIVE_MIN_MS);
+const mount = document.getElementById('app');
+const app = initTabsApp(mount);
+
+// Start refresh schedules
+app.startAutoRefresh();
