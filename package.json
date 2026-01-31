@@ -1,1 +1,18 @@
-
+{
+  "name": "macro-dashboard-ios",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "sync-sw": "node -e \"import fs from 'fs'; fs.copyFileSync('src/pwa/serviceWorker.js','public/sw.js'); console.log('synced sw -> public/sw.js');\"",
+    "dev": "npm run sync-sw && vite",
+    "build": "npm run sync-sw && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "lightweight-charts": "^4.2.1"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}
