@@ -9,10 +9,10 @@ export const macroConfig = {
       symbols: [
         { type: 'stock', symbol: 'SPY' },
         { type: 'stock', symbol: 'QQQ' },
-        { type: 'stock', symbol: 'XIC' },
         { type: 'stock', symbol: 'IEUR' },
         { type: 'stock', symbol: 'EWJ' },
-        { type: 'stock', symbol: 'EWH' }
+        { type: 'stock', symbol: 'EWH' },
+        { type: 'stock', symbol: 'XIC' }
       ]
     },
     {
