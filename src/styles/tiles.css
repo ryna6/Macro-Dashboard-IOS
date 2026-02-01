@@ -16,9 +16,7 @@
   touch-action: manipulation;
 }
 
-.tile:active {
-  transform: translateY(1px);
-}
+.tile:active { transform: translateY(1px); }
 
 .tile-top {
   display: flex;
@@ -65,13 +63,8 @@
   color: rgba(255, 255, 255, 0.70);
 }
 
-.tile-change.is-up {
-  color: rgba(80, 255, 170, 0.95);
-}
-
-.tile-change.is-down {
-  color: rgba(255, 105, 120, 0.95);
-}
+.tile-change.is-up { color: rgba(80, 255, 170, 0.95); }
+.tile-change.is-down { color: rgba(255, 105, 120, 0.95); }
 
 .tile-spark {
   width: 100%;
