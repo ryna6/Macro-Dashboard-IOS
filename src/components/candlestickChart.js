@@ -17,6 +17,8 @@ export function renderCandlestickChart(container, candles, opts = {}) {
   container.classList.add('candle-chart-host');
 
   const data = toSeriesData(candles);
+  const barByTime = new Map();
+  for (const d of data) barByTime.set(d.time, d);
 
   const chartEl = document.createElement('div');
   chartEl.className = 'candle-chart-inner';
@@ -97,12 +99,13 @@ export function renderCandlestickChart(container, candles, opts = {}) {
   };
 
   chart.subscribeCrosshairMove((param) => {
+    // Avoid relying on param.seriesData shape (it differs across versions).
     if (!param || !param.time || !param.point) {
       if (!scrubbing) showTip(null);
       return;
     }
 
-    const bar = param.seriesData.get(series);
+    const bar = barByTime.get(param.time) || null;
     if (!bar) {
       if (!scrubbing) showTip(null);
       return;
