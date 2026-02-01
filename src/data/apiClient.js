@@ -12,15 +12,32 @@ const FINNHUB_KEYS = {
 };
 
 function tokenFor(tabId) {
-  const t = (FINNHUB_KEYS[tabId] || FINNHUB_KEYS.global || '').trim();
-  if (!t) throw new Error(`Missing Finnhub API key for tab "${tabId}" (and no global fallback).`);
-  return t;
+  const key = String(tabId || '').trim();
+  const token = (FINNHUB_KEYS[key] || '').trim();
+  if (!token) {
+    throw new Error(`Missing Finnhub API key for tab "${key}".`);
+  }
+  return token;
 }
 
-async function fetchJson(url, signal) {
+function buildUrl(path, params = {}, tabId) {
+  const token = tokenFor(tabId);
+  const url = new URL(`${FINNHUB_BASE}${path}`);
+  url.searchParams.set('token', token);
+
+  Object.entries(params).forEach(([k, v]) => {
+    if (v === undefined || v === null || v === '') return;
+    url.searchParams.set(k, String(v));
+  });
+
+  return url.toString();
+}
+
+async function fetchJson(url, { signal } = {}) {
   const res = await fetch(url, { signal, cache: 'no-store' });
   const text = await res.text().catch(() => '');
-  let data;
+  let data = null;
+
   try {
     data = text ? JSON.parse(text) : {};
   } catch {
@@ -28,97 +45,84 @@ async function fetchJson(url, signal) {
   }
 
   if (!res.ok) {
-    // Finnhub often returns { error: "..." }
-    const msg = data?.error || data?.message || `HTTP ${res.status}`;
+    const msg =
+      data?.error ||
+      data?.message ||
+      `Finnhub HTTP ${res.status} ${res.statusText}`;
     const err = new Error(msg);
     err.status = res.status;
+    err.url = url;
     throw err;
   }
+
   return data;
 }
 
-function buildUrl(path, params, tabId) {
-  const token = tokenFor(tabId);
-  const usp = new URLSearchParams({ ...params, token });
-  return `${FINNHUB_BASE}${path}?${usp.toString()}`;
-}
-
-function norm2(arg1, arg2) {
-  if (arg1 && typeof arg1 === 'object') return arg1;
-  return { keyName: arg1, signal: arg2 };
-}
-function normQuote(arg1, arg2, arg3) {
+// Support both object-style and positional-style calls
+function normalizeArgs(arg1, arg2, arg3) {
   if (arg1 && typeof arg1 === 'object') return arg1;
   return { keyName: arg1, symbol: arg2, signal: arg3 };
 }
-function normCandles(arg1, arg2, arg3, arg4, arg5, arg6) {
+
+function normalizeCandleArgs(arg1, arg2, arg3, arg4, arg5, arg6) {
   if (arg1 && typeof arg1 === 'object') return arg1;
   return { keyName: arg1, symbol: arg2, resolution: arg3, from: arg4, to: arg5, signal: arg6 };
 }
-function normForexSymbols(arg1, arg2, arg3) {
-  if (arg1 && typeof arg1 === 'object') return arg1;
-  return { keyName: arg1, exchange: arg2, signal: arg3 };
-}
-function normForexRates(arg1, arg2, arg3) {
+
+function normalizeForexRatesArgs(arg1, arg2, arg3) {
   if (arg1 && typeof arg1 === 'object') return arg1;
   return { keyName: arg1, base: arg2, signal: arg3 };
 }
-function normCalendar(arg1, arg2, arg3, arg4) {
+
+function normalizeCalendarArgs(arg1, arg2, arg3, arg4) {
   if (arg1 && typeof arg1 === 'object') return arg1;
   return { keyName: arg1, from: arg2, to: arg3, signal: arg4 };
 }
 
 export const apiClient = {
-  quote(arg1, arg2, arg3) {
-    const { keyName, symbol, signal } = normQuote(arg1, arg2, arg3);
+  // Stocks/ETFs quote
+  async quote(arg1, arg2, arg3) {
+    const { keyName, symbol, signal } = normalizeArgs(arg1, arg2, arg3);
     const url = buildUrl('/quote', { symbol }, keyName);
-    return fetchJson(url, signal);
+    return fetchJson(url, { signal });
   },
 
-  stockProfile2(arg1, arg2, arg3) {
-    const { keyName, symbol, signal } = normQuote(arg1, arg2, arg3);
+  // Company profile (logos)
+  async stockProfile2(arg1, arg2, arg3) {
+    const { keyName, symbol, signal } = normalizeArgs(arg1, arg2, arg3);
     const url = buildUrl('/stock/profile2', { symbol }, keyName);
-    return fetchJson(url, signal);
+    return fetchJson(url, { signal });
   },
 
-  stockCandles(arg1, arg2, arg3, arg4, arg5, arg6) {
-    const { keyName, symbol, resolution, from, to, signal } = normCandles(
+  // Stock candles (may be plan-limited)
+  async stockCandles(arg1, arg2, arg3, arg4, arg5, arg6) {
+    const { keyName, symbol, resolution, from, to, signal } = normalizeCandleArgs(
       arg1, arg2, arg3, arg4, arg5, arg6
     );
     const url = buildUrl('/stock/candle', { symbol, resolution, from, to }, keyName);
-    return fetchJson(url, signal);
+    return fetchJson(url, { signal });
   },
 
-  forexCandles(arg1, arg2, arg3, arg4, arg5, arg6) {
-    const { keyName, symbol, resolution, from, to, signal } = normCandles(
+  // Forex candles
+  async forexCandles(arg1, arg2, arg3, arg4, arg5, arg6) {
+    const { keyName, symbol, resolution, from, to, signal } = normalizeCandleArgs(
       arg1, arg2, arg3, arg4, arg5, arg6
     );
     const url = buildUrl('/forex/candle', { symbol, resolution, from, to }, keyName);
-    return fetchJson(url, signal);
+    return fetchJson(url, { signal });
   },
 
-  forexExchanges(arg1, arg2) {
-    const { keyName, signal } = norm2(arg1, arg2);
-    const url = buildUrl('/forex/exchange', {}, keyName);
-    return fetchJson(url, signal);
-  },
-
-  forexSymbols(arg1, arg2, arg3) {
-    const { keyName, exchange, signal } = normForexSymbols(arg1, arg2, arg3);
-    const url = buildUrl('/forex/symbol', { exchange }, keyName);
-    return fetchJson(url, signal);
-  },
-
-  forexRates(arg1, arg2 = 'USD', arg3) {
-    const { keyName, base, signal } = normForexRates(arg1, arg2, arg3);
+  // Forex rates (used for metals overview)
+  async forexRates(arg1, arg2, arg3) {
+    const { keyName, base, signal } = normalizeForexRatesArgs(arg1, arg2, arg3);
     const url = buildUrl('/forex/rates', { base }, keyName);
-    return fetchJson(url, signal);
+    return fetchJson(url, { signal });
   },
 
-  economicCalendar(arg1, arg2, arg3, arg4) {
-    const { keyName, from, to, signal } = normCalendar(arg1, arg2, arg3, arg4);
+  // Economic calendar (may be plan-limited)
+  async economicCalendar(arg1, arg2, arg3, arg4) {
+    const { keyName, from, to, signal } = normalizeCalendarArgs(arg1, arg2, arg3, arg4);
     const url = buildUrl('/calendar/economic', { from, to }, keyName);
-    return fetchJson(url, signal);
+    return fetchJson(url, { signal });
   }
 };
-
