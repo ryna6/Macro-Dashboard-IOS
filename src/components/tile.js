@@ -1,4 +1,5 @@
 import { candleService } from '../data/candleService.js';
+import { quoteService } from '../data/quoteService.js';
 import { openTileExpanded } from './tileExpanded.js';
 
 function el(tag, className) {
@@ -20,7 +21,7 @@ function fmtPct(x) {
   return `${sign}${x.toFixed(2)}%`;
 }
 
-function drawSpark(canvas, candles) {
+function drawSpark(canvas, points) {
   const ctx = canvas?.getContext?.('2d');
   if (!ctx) return;
 
@@ -28,19 +29,19 @@ function drawSpark(canvas, candles) {
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
 
-  if (!candles || candles.length < 2) return;
-  const closes = candles.map((c) => c.c).filter((v) => Number.isFinite(v));
-  if (closes.length < 2) return;
+  if (!points || points.length < 2) return;
+  const values = points.map((p) => p?.p).filter((v) => Number.isFinite(v));
+  if (values.length < 2) return;
 
-  const min = Math.min(...closes);
-  const max = Math.max(...closes);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
   const range = max - min || 1;
 
   ctx.lineWidth = 1.5;
   ctx.beginPath();
 
-  closes.forEach((v, i) => {
-    const x = (i / (closes.length - 1)) * (w - 2) + 1;
+  values.forEach((v, i) => {
+    const x = (i / (values.length - 1)) * (w - 2) + 1;
     const y = h - ((v - min) / range) * (h - 2) - 1;
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
@@ -80,7 +81,7 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   root.appendChild(spark);
 
   function update() {
-    const snap = candleService.getSnapshot(tabId, symbolSpec, timeframe);
+    const snap = quoteService.getSnapshot(tabId, symbolSpec, timeframe);
     price.textContent = fmtPrice(snap.last);
 
     const pct = snap.changePct;
@@ -89,10 +90,11 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
     change.classList.toggle('is-up', pct != null && pct > 0);
     change.classList.toggle('is-down', pct != null && pct < 0);
 
-    drawSpark(spark, (snap.candles || []).slice(-120));
+    drawSpark(spark, (snap.spark || []).slice(-120));
   }
 
   function expand() {
+    // Expanded view still attempts candles (you’ll swap provider next)
     const candles = candleService.getCandles(tabId, symbolSpec, timeframe);
     openTileExpanded({
       symbol: symbolSpec.symbol,
