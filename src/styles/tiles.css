@@ -8,7 +8,7 @@
   background: rgba(255, 255, 255, 0.06);
   border-radius: 16px;
   padding: 11px;
-  min-height: 112px;
+  min-height: 120px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -25,8 +25,8 @@
 }
 
 .tile-logo {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
   display: grid;
   place-items: center;
