@@ -1,17 +1,44 @@
-import { macroConfig } from '../data/macroConfig.js';
 import { createTile } from './tile.js';
 
-export function renderTileGrid(container, { tabId, timeframe }) {
-  if (!container) return;
+function el(tag, className) {
+  const n = document.createElement(tag);
+  if (className) n.className = className;
+  return n;
+}
 
-  const tab = macroConfig.tabs.find((t) => t.id === tabId);
-  if (!tab) return;
+/**
+ * Preferred API (newer):
+ * returns { el, updateAll, setTimeframe }
+ */
+export function createTileGrid({ tabId, symbols, timeframe }) {
+  const grid = el('div', 'tile-grid');
+  const tiles = [];
 
-  container.innerHTML = '';
-  container.classList.add('tile-grid');
-
-  (tab.symbols || []).forEach((spec) => {
-    const tile = createTile({ tabId, symbolSpec: spec, timeframe });
-    container.appendChild(tile.el);
+  (symbols || []).forEach((symbolSpec) => {
+    const t = createTile({ tabId, symbolSpec, timeframe });
+    tiles.push(t);
+    grid.appendChild(t.el);
   });
+
+  function setTimeframe(nextTf) {
+    tiles.forEach((t) => t.setTimeframe?.(nextTf));
+  }
+
+  function updateAll() {
+    tiles.forEach((t) => t.update?.());
+  }
+
+  return { el: grid, setTimeframe, updateAll };
+}
+
+/**
+ * Backward-compatible API (older code):
+ * renderTileGrid(container, { tabId, timeframe, symbols })
+ */
+export function renderTileGrid(container, { tabId, symbols, timeframe }) {
+  if (!container) return;
+  const grid = createTileGrid({ tabId, symbols, timeframe });
+  container.innerHTML = '';
+  container.appendChild(grid.el);
+  return grid;
 }
