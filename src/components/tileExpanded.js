@@ -62,18 +62,29 @@ export function openTileExpanded({
 
   overlay.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
 
-  const chart = renderCandlestickChart(chartWrap, candles, {
-    onHoverCandle: (bar) => {
-      if (!bar) {
-        ohlc.textContent = 'Hold & drag on the chart to inspect OHLC';
-        return;
+  const hasCandles = Array.isArray(candles) && candles.length > 0;
+  let chart = null;
+
+  if (!hasCandles) {
+    // Avoid a blank panel if the candle endpoint is unavailable.
+    const empty = el('div', 'tile-modal-empty');
+    empty.textContent = 'Candlestick data unavailable. Configure an OHLCV provider for the expanded view.';
+    chartWrap.appendChild(empty);
+    ohlc.textContent = 'No OHLC data available.';
+  } else {
+    chart = renderCandlestickChart(chartWrap, candles, {
+      onHoverCandle: (bar) => {
+        if (!bar) {
+          ohlc.textContent = 'Hold & drag on the chart to inspect OHLC';
+          return;
+        }
+        const timeStr = nyTime.formatTime(bar.time);
+        ohlc.textContent =
+          `O ${bar.open.toFixed(2)}   H ${bar.high.toFixed(2)}   ` +
+          `L ${bar.low.toFixed(2)}   C ${bar.close.toFixed(2)}   • ${timeStr} ET`;
       }
-      const timeStr = nyTime.formatTime(bar.time);
-      ohlc.textContent =
-        `O ${bar.open.toFixed(2)}   H ${bar.high.toFixed(2)}   ` +
-        `L ${bar.low.toFixed(2)}   C ${bar.close.toFixed(2)}   • ${timeStr} ET`;
-    }
-  });
+    });
+  }
 
   function destroy() {
     try {
