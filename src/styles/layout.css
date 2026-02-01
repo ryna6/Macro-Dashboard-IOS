@@ -29,13 +29,6 @@ body {
   overflow: hidden;
 }
 
-.main-scroll {
-  height: 100%;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
-}
-
 .app {
   height: 100vh;
   height: 100dvh;
@@ -86,20 +79,47 @@ body {
 .app-main {
   flex: 1;
   position: relative;
+  overflow: hidden; /* important: no scrolling on the shell */
 }
 
 /* Views */
 .tab-view {
   position: absolute;
   inset: 0;
-  padding: 12px 12px calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 10px) 12px;
-  overflow-y: auto;
-  overflow-x: hidden;
-  -webkit-overflow-scrolling: touch;
+
+  /* ✅ remove oversized bottom padding that forces overflow/scroll */
+  padding: 12px;
+
+  /* base: hidden; controlled by .is-active */
   display: none;
+
+  /* base: no scrolling unless explicitly enabled */
+  overflow: hidden;
 }
 
 .tab-view.is-active { display: block; }
+
+/* ✅ Macro tile tabs: non-scrollable + use flex so grid can fill height */
+.tab-view--macro.is-active {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ✅ Calendar needs scroll */
+.tab-view--calendar {
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+
+  /* small breathing room at bottom */
+  padding-bottom: 16px;
+}
+
+/* Tile grid host fills the view so grid can size rows to fit exactly */
+.tile-grid-host {
+  flex: 1;
+  min-height: 0; /* critical for flex children to avoid overflow */
+}
 
 /* Dropdown (timeframe) */
 .dd { position: relative; }
@@ -217,8 +237,3 @@ body {
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 .cal-row:first-of-type { border-top: 0; }
-
-.cal-time { font-size: 12px; color: var(--muted); }
-.cal-event { font-size: 13px; color: var(--text); line-height: 1.2; }
-.cal-stars { font-size: 12px; color: rgba(255, 255, 255, 0.75); text-align: right; }
-.cal-empty { font-size: 13px; color: var(--muted2); padding: 6px 0 2px; }
