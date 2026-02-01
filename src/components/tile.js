@@ -134,7 +134,7 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
       fallback.style.display = 'block';
     }
 
-    price.textContent = fmtPrice(snap.last);
+    price.textContent = `$${fmtPrice(snap.last)}`;
 
     const pct = snap.changePct;
     change.textContent = fmtPct(pct);
