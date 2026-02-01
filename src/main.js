@@ -1,4 +1,3 @@
-// src/main.js
 import './styles/layout.css';
 import './styles/tiles.css';
 import './styles/charts.css';
@@ -6,11 +5,12 @@ import './styles/charts.css';
 import { registerSW } from './pwa/registerSW.js';
 import { initTabsApp } from './components/tabs.js';
 
-// Zoom-lock (iOS Safari)
+// iOS pinch zoom guard (Safari still triggers gesture events sometimes)
 ['gesturestart', 'gesturechange', 'gestureend'].forEach((evt) => {
   document.addEventListener(evt, (e) => e.preventDefault(), { passive: false });
 });
 
+// Reduce double-tap zoom edge cases
 let lastTouchEnd = 0;
 document.addEventListener(
   'touchend',
@@ -27,5 +27,5 @@ registerSW();
 const mount = document.getElementById('app');
 const app = initTabsApp(mount);
 
-// Start refresh schedules
+// Auto refresh active tab only (every 5 minutes)
 app.startAutoRefresh();
