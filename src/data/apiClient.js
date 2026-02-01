@@ -7,13 +7,13 @@ const FINNHUB_BASE = 'https://finnhub.io/api/v1';
  */
 const FINNHUB_KEYS = {
   global: 'd4d73mhr01qovljoddigd4d73mhr01qovljoddj0',
-  metals: ' ',
-  commo: 'YOUR_FINNHUB_KEY_COMMO',
-  rates: ' ',
-  calendar: 'd4d73mhr01qovljoddigd4d73mhr01qovljoddj0' // optional (can reuse one above)
+  metals: 'd5s6af9r01qoo9r2t3a0d5s6af9r01qoo9r2t3ag ',
+  commo: 'd5s6af9r01qoo9r2t3a0d5s6af9r01qoo9r2t3ag ',
+  rates: 'd5s6jg1r01qoo9r2ukugd5s6jg1r01qoo9r2ukv0',
+  calendar: 'd5s6jg1r01qoo9r2ukugd5s6jg1r01qoo9r2ukv0'
 };
 
-const DEFAULT_KEY = 'global';
+const DEFAULT_KEY = 'rates';
 
 /**
  * Basic per-key request queue + spacing to be rate-limit aware.
