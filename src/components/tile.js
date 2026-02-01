@@ -91,7 +91,7 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   logo.appendChild(logoFallback);
 
   const sym = el('div', 'tile-symbol');
-  sym.textContent = symbolSpec.symbol;
+  sym.textContent = symbolSpec.name || symbolSpec.symbol;
 
   top.appendChild(logo);
   top.appendChild(sym);
