@@ -1,6 +1,6 @@
 {
   "name": "Macro Dashboard",
-  "short_name": "Macro",
+  "short_name": "MacroDB",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#000000",
