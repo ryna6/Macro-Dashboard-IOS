@@ -1,7 +1,7 @@
 import { macroConfig } from '../data/macroConfig.js';
 import { TIMEFRAMES } from '../data/candleService.js';
-import { quoteService } from '../data/quoteService.js';
 import { calendarService } from '../data/calendarService.js';
+import { quoteService } from '../data/quoteService.js';
 import { createHeader } from './header.js';
 import { renderTileGrid } from './tileGrid.js';
 import { initCalendarView } from './calendarView.js';
@@ -20,10 +20,6 @@ export function initTabsApp(mountEl) {
     timeframe: TIMEFRAMES.ONE_DAY
   };
 
-  // Per-tab refreshing state so one slow refresh doesn't disable the refresh button
-  // on other tabs (this is what was making Metals feel “unclickable”).
-  const refreshingByTab = new Map();
-
   const app = el('div', 'app');
 
   const header = createHeader({
@@ -33,7 +29,7 @@ export function initTabsApp(mountEl) {
       rerenderActive();
     },
     onRefresh: async () => {
-      await refreshTab(state.activeTabId, { force: true, reason: 'manual' });
+      await refreshActiveTab({ force: true, reason: 'manual' });
     }
   });
 
@@ -73,6 +69,12 @@ export function initTabsApp(mountEl) {
 
   mountEl.innerHTML = '';
   mountEl.appendChild(app);
+
+  // Prevent "tab switch while fetching" from leaving a new tab blank:
+  // - only one refresh runs at a time
+  // - if the active tab changes mid-refresh, we queue a single follow-up refresh
+  let refreshing = false;
+  let queuedRefresh = null; // { force, reason }
 
   // Calendar wiring
   let calendar = null;
@@ -130,34 +132,44 @@ export function initTabsApp(mountEl) {
     }
   }
 
-  async function refreshTab(tabId, { force = false } = {}) {
-    const tab = macroConfig.tabs.find((t) => t.id === tabId);
+  async function refreshActiveTab({ force = false, reason = 'auto' } = {}) {
+    const requestedTabId = state.activeTabId;
+    if (refreshing) {
+      queuedRefresh = { force, reason };
+      return;
+    }
+
+    const tab = macroConfig.tabs.find((t) => t.id === requestedTabId);
     if (!tab) return;
 
-    if (refreshingByTab.get(tabId)) return;
-    refreshingByTab.set(tabId, true);
-    if (tabId === state.activeTabId) header.setRefreshing(true);
+    refreshing = true;
+    header.setRefreshing(true);
 
     try {
       if (tab.kind === 'macro') {
-        await quoteService.prefetchTab(tabId, { force });
+        await quoteService.prefetchTab(tab.id, tab.symbols, { reason, force });
+        if (state.activeTabId === tab.id) {
+          header.setLastUpdated(quoteService.getTabLastUpdatedMs(tab.id));
+          rerenderActive();
+        }
       } else {
         ensureCalendarInit();
         await calendar?.refresh?.({ force: true });
-      }
-
-      if (tabId === state.activeTabId) {
-        if (tab.kind === 'macro') {
-          header.setLastUpdated(quoteService.getTabLastUpdatedMs(tabId));
-          rerenderActive();
-        } else {
-          header.setLastUpdated(calendarService.getLastFetchMs?.() || null);
-          calendar?.renderFromCache?.();
-        }
+        header.setLastUpdated(calendarService.getLastFetchMs?.() || null);
       }
     } finally {
-      refreshingByTab.set(tabId, false);
-      if (tabId === state.activeTabId) header.setRefreshing(false);
+      header.setRefreshing(false);
+      refreshing = false;
+
+      // If the user switched tabs while we were fetching, run one follow-up refresh
+      // for the CURRENT active tab.
+      if (queuedRefresh) {
+        const next = queuedRefresh;
+        queuedRefresh = null;
+        if (state.activeTabId !== requestedTabId) {
+          refreshActiveTab(next);
+        }
+      }
     }
   }
 
@@ -166,19 +178,28 @@ export function initTabsApp(mountEl) {
     updateTabbar();
     showActiveView();
     updateHeaderForActiveTab();
-
-    header.setRefreshing(!!refreshingByTab.get(tabId));
     rerenderActive();
+
+    // Auto-refresh the tab on first open / when stale, so switching tabs isn't blank.
+    const tab = macroConfig.tabs.find((t) => t.id === tabId);
+    if (tab?.kind === 'macro') {
+      const last = quoteService.getTabLastUpdatedMs(tabId);
+      const STALE_ON_ACTIVATE_MS = 30 * 1000;
+      if (!last || (Date.now() - last) > STALE_ON_ACTIVATE_MS) {
+        refreshActiveTab({ force: false, reason: 'tab-activate' });
+      }
+    }
   }
 
+  // initial view
   setActiveTab(state.activeTabId);
 
   return {
     startAutoRefresh() {
-      refreshTab(state.activeTabId, { force: false, reason: 'startup' });
+      refreshActiveTab({ force: false, reason: 'startup' });
 
       const id = setInterval(() => {
-        refreshTab(state.activeTabId, { force: false, reason: 'timer' });
+        refreshActiveTab({ force: false, reason: 'timer' });
       }, FIVE_MIN_MS);
 
       return () => clearInterval(id);
