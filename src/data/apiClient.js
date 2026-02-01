@@ -1,108 +1,161 @@
 // src/data/apiClient.js
+// Finnhub REST wrapper.
+//
+// IMPORTANT:
+// - This app supports "one API key per tab".
+// - Keys are read in this priority order:
+//   1) localStorage: finnhub:key:<tabId>
+//   2) Vite env:     VITE_FINNHUB_KEY_<TABID>
+//   3) hardcoded map below (keep empty in repo)
+
 const FINNHUB_BASE = 'https://finnhub.io/api/v1';
 
-const DEFAULT_KEY = 'calendar';
-/**
- * One Finnhub key per macro tab (1–4). Calendar can be separate or reused.
- * Replace these with your real keys.
- */
+// Keep empty in repo. For quick testing you can paste keys here temporarily.
 const FINNHUB_KEYS = {
-  global: 'd4d73mhr01qovljoddigd4d73mhr01qovljoddj0',
-  metals: 'd5s6af9r01qoo9r2t3a0d5s6af9r01qoo9r2t3ag ',
-  commo: 'd5s6af9r01qoo9r2t3a0d5s6af9r01qoo9r2t3ag ',
-  rates: 'd5s6jg1r01qoo9r2ukugd5s6jg1r01qoo9r2ukv0',
-  calendar: 'd5s6jg1r01qoo9r2ukugd5s6jg1r01qoo9r2ukv0'
+  global: '',
+  metals: '',
+  commo: '',
+  rates: '',
+  calendar: ''
 };
 
-function envKeyName(keyName) {
-  return `VITE_FINNHUB_KEY_${String(keyName || '').toUpperCase()}`;
+const DEFAULT_FALLBACK_KEY = 'global';
+
+function envKeyName(tabId) {
+  return `VITE_FINNHUB_KEY_${String(tabId).toUpperCase()}`;
 }
 
-function readToken(keyName) {
-  const fromLs = (typeof window !== 'undefined' && window.localStorage)
-    ? window.localStorage.getItem(`finnhub:key:${keyName}`) || ''
-    : '';
+function readTokenFor(tabId) {
+  const k = String(tabId || '').trim() || DEFAULT_FALLBACK_KEY;
 
-  const fromEnv = (typeof import.meta !== 'undefined' && import.meta.env)
-    ? (import.meta.env[envKeyName(keyName)] || '')
-    : '';
+  // 1) localStorage override (best for testing without committing secrets)
+  try {
+    const ls = localStorage.getItem(`finnhub:key:${k}`);
+    if (ls && ls.trim()) return ls.trim();
+  } catch (_) {}
 
-  const fromHardcode = FINNHUB_KEYS[keyName] || '';
+  // 2) Vite env
+  try {
+    const env = import.meta?.env?.[envKeyName(k)];
+    if (env && String(env).trim()) return String(env).trim();
+  } catch (_) {}
 
-  // Priority: localStorage → env → hardcode
-  return String(fromLs || fromEnv || fromHardcode || '').trim();
+  // 3) hardcoded
+  const hc = FINNHUB_KEYS[k];
+  if (hc && String(hc).trim()) return String(hc).trim();
+
+  // last fallback
+  const fb = FINNHUB_KEYS[DEFAULT_FALLBACK_KEY];
+  return fb && String(fb).trim() ? String(fb).trim() : '';
 }
 
-function isPlaceholder(token) {
-  if (!token) return true;
-  if (token.startsWith('YOUR_')) return true;
-  if (token.length < 8) return true;
-  return false;
+function buildUrl(path, params = {}, tabId) {
+  const token = readTokenFor(tabId);
+  const url = new URL(`${FINNHUB_BASE}${path}`);
+
+  if (token) url.searchParams.set('token', token);
+
+  Object.entries(params || {}).forEach(([k, v]) => {
+    if (v === undefined || v === null || v === '') return;
+    url.searchParams.set(k, String(v));
+  });
+
+  return url.toString();
 }
 
-function pickToken(keyName) {
-  const wanted = keyName || DEFAULT_KEY;
-  let token = readToken(wanted);
-  if (!isPlaceholder(token)) return token;
-
-  // fallback to global for dev convenience
-  if (wanted !== DEFAULT_KEY) {
-    token = readToken(DEFAULT_KEY);
-    if (!isPlaceholder(token)) return token;
-  }
-  return '';
-}
-
-async function fetchJson(url, signal) {
+async function fetchJson(url, { signal } = {}) {
   const res = await fetch(url, { signal, cache: 'no-store' });
-  const text = await res.text();
-  let data;
-  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
   if (!res.ok) {
-    const msg = data?.error || data?.message || `HTTP ${res.status}`;
-    throw new Error(msg);
+    const t = await res.text().catch(() => '');
+    throw new Error(`Finnhub HTTP ${res.status} ${res.statusText} :: ${t.slice(0, 180)}`);
   }
-  return data;
+  return res.json();
 }
 
-function buildUrl(path, params, keyName) {
-  const token = pickToken(keyName);
-  if (!token) throw new Error(`Missing Finnhub API key for tab "${keyName}"`);
-  const usp = new URLSearchParams({ ...params, token });
-  return `${BASE}${path}?${usp.toString()}`;
+// Allow both:
+//   apiClient.quote({ keyName, symbol, signal })
+// and
+//   apiClient.quote(keyName, symbol, signal)
+function normalizeArgs(arg1, arg2, arg3) {
+  if (arg1 && typeof arg1 === 'object') return arg1;
+  return { keyName: arg1, symbol: arg2, signal: arg3 };
+}
+
+function normalizeCandleArgs(arg1, arg2, arg3, arg4, arg5, arg6) {
+  if (arg1 && typeof arg1 === 'object') return arg1;
+  return { keyName: arg1, symbol: arg2, resolution: arg3, from: arg4, to: arg5, signal: arg6 };
+}
+
+function normalizeForexRatesArgs(arg1, arg2, arg3) {
+  if (arg1 && typeof arg1 === 'object') return arg1;
+  return { keyName: arg1, base: arg2, signal: arg3 };
+}
+
+function normalizeCalendarArgs(arg1, arg2, arg3, arg4) {
+  if (arg1 && typeof arg1 === 'object') return arg1;
+  return { keyName: arg1, from: arg2, to: arg3, signal: arg4 };
 }
 
 export const apiClient = {
-  // Quotes (overview tiles)
-  quote: (keyName, symbol, signal) => {
+  // Stocks/ETFs quote
+  async quote(arg1, arg2, arg3) {
+    const { keyName, symbol, signal } = normalizeArgs(arg1, arg2, arg3);
     const url = buildUrl('/quote', { symbol }, keyName);
-    return fetchJson(url, signal);
+    return fetchJson(url, { signal });
   },
 
-  // Candles (may be premium depending on your plan)
-  stockCandles: (keyName, symbol, resolution, from, to, signal) => {
+  // Stocks candles
+  async stockCandles(arg1, arg2, arg3, arg4, arg5, arg6) {
+    const { keyName, symbol, resolution, from, to, signal } = normalizeCandleArgs(
+      arg1,
+      arg2,
+      arg3,
+      arg4,
+      arg5,
+      arg6
+    );
     const url = buildUrl('/stock/candle', { symbol, resolution, from, to }, keyName);
-    return fetchJson(url, signal);
+    return fetchJson(url, { signal });
   },
 
-  forexExchanges: (keyName, signal) => {
+  // Forex candles (for future expanded-tile provider use)
+  async forexCandles(arg1, arg2, arg3, arg4, arg5, arg6) {
+    const { keyName, symbol, resolution, from, to, signal } = normalizeCandleArgs(
+      arg1,
+      arg2,
+      arg3,
+      arg4,
+      arg5,
+      arg6
+    );
+    const url = buildUrl('/forex/candle', { symbol, resolution, from, to }, keyName);
+    return fetchJson(url, { signal });
+  },
+
+  // Forex exchanges/symbol discovery (optional)
+  async forexExchanges(arg1, arg2) {
+    const { keyName, signal } = (arg1 && typeof arg1 === 'object') ? arg1 : { keyName: arg1, signal: arg2 };
     const url = buildUrl('/forex/exchange', {}, keyName);
-    return fetchJson(url, signal);
+    return fetchJson(url, { signal });
   },
 
-  forexSymbols: (keyName, exchange, signal) => {
-    const url = buildUrl('/forex/symbol', { exchange }, keyName);
-    return fetchJson(url, signal);
+  async forexSymbols(arg1, arg2, arg3) {
+    const o = (arg1 && typeof arg1 === 'object') ? arg1 : { keyName: arg1, exchange: arg2, signal: arg3 };
+    const url = buildUrl('/forex/symbol', { exchange: o.exchange }, o.keyName);
+    return fetchJson(url, { signal: o.signal });
   },
 
-  // Optional: can be used later for fallback (not required for current fix)
-  forexRates: (keyName, base = 'USD', signal) => {
+  // Forex rates (used for metals overview)
+  async forexRates(arg1, arg2, arg3) {
+    const { keyName, base, signal } = normalizeForexRatesArgs(arg1, arg2, arg3);
     const url = buildUrl('/forex/rates', { base }, keyName);
-    return fetchJson(url, signal);
+    return fetchJson(url, { signal });
   },
 
-  economicCalendar: (keyName, from, to, signal) => {
+  // Economic calendar
+  async economicCalendar(arg1, arg2, arg3, arg4) {
+    const { keyName, from, to, signal } = normalizeCalendarArgs(arg1, arg2, arg3, arg4);
     const url = buildUrl('/calendar/economic', { from, to }, keyName);
-    return fetchJson(url, signal);
+    return fetchJson(url, { signal });
   }
 };
