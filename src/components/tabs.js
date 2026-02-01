@@ -1,6 +1,7 @@
 import { macroConfig } from '../data/macroConfig.js';
-import { candleService, TIMEFRAMES } from '../data/candleService.js';
+import { TIMEFRAMES } from '../data/candleService.js';
 import { calendarService } from '../data/calendarService.js';
+import { quoteService } from '../data/quoteService.js';
 import { createHeader } from './header.js';
 import { renderTileGrid } from './tileGrid.js';
 import { initCalendarView } from './calendarView.js';
@@ -101,12 +102,11 @@ export function initTabsApp(mountEl) {
 
     if (tab?.kind === 'calendar') {
       header.setTimeframeVisible(false);
-      // last updated for calendar comes from calendar cache
       header.setLastUpdated(calendarService.getLastFetchMs?.() || null);
     } else {
       header.setTimeframeVisible(true);
       header.setActiveTf(state.timeframe);
-      header.setLastUpdated(candleService.getTabLastUpdatedMs(state.activeTabId));
+      header.setLastUpdated(quoteService.getTabLastUpdatedMs(state.activeTabId));
     }
   }
 
@@ -118,7 +118,7 @@ export function initTabsApp(mountEl) {
       const { viewEl } = views.get(tab.id);
       const host = viewEl.querySelector('.tile-grid-host');
       renderTileGrid(host, { tabId: tab.id, timeframe: state.timeframe });
-      header.setLastUpdated(candleService.getTabLastUpdatedMs(tab.id));
+      header.setLastUpdated(quoteService.getTabLastUpdatedMs(tab.id));
     } else {
       ensureCalendarInit();
       calendar?.renderFromCache?.();
@@ -134,8 +134,8 @@ export function initTabsApp(mountEl) {
 
     try {
       if (tab.kind === 'macro') {
-        await candleService.prefetchTab(tab.id, { reason, force });
-        header.setLastUpdated(candleService.getTabLastUpdatedMs(tab.id));
+        await quoteService.prefetchTab(tab.id, tab.symbols, { reason, force });
+        header.setLastUpdated(quoteService.getTabLastUpdatedMs(tab.id));
         rerenderActive();
       } else {
         ensureCalendarInit();
@@ -152,8 +152,6 @@ export function initTabsApp(mountEl) {
     updateTabbar();
     showActiveView();
     updateHeaderForActiveTab();
-
-    // Render quickly from cache
     rerenderActive();
   }
 
@@ -162,7 +160,6 @@ export function initTabsApp(mountEl) {
 
   return {
     startAutoRefresh() {
-      // On open: refresh active tab only (no keys required to see UI; it’ll fail gracefully)
       refreshActiveTab({ force: false, reason: 'startup' });
 
       const id = setInterval(() => {
