@@ -17,11 +17,23 @@ html, body {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
+  overflow: hidden;
 }
 
 body {
   overflow: hidden;
   overscroll-behavior: none;
+}
+
+#app {
+  overflow: hidden;
+}
+
+.main-scroll {
+  height: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .app {
@@ -127,7 +139,7 @@ body {
 
 .dd-item:active { background: rgba(255, 255, 255, 0.08); }
 
-/* (3) Refresh button (no dropdown) + spinner */
+/* (3) Refresh button + spinner */
 .refresh-btn {
   border: 0;
   background: rgba(255, 255, 255, 0.08);
