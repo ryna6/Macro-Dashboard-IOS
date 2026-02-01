@@ -44,9 +44,9 @@ export const macroConfig = {
       shortName: 'Rates',
       longName: 'US & Corporate Bonds',
       symbols: [
-        { type: 'stock', symbol: 'SHY', name: '1-3 Year Treasury Bond' },
-        { type: 'stock', symbol: 'IEF', name: '7-10 Year Treasury Bond' },
-        { type: 'stock', symbol: 'TLT', name: '20+ Year Treasury Bond' },
+        { type: 'stock', symbol: 'SHY', name: '1-3Y Treasury Bond' },
+        { type: 'stock', symbol: 'IEF', name: '7-10Y Treasury Bond' },
+        { type: 'stock', symbol: 'TLT', name: '20Y+ Treasury Bond' },
         { type: 'stock', symbol: 'HYG', name: 'High Risk Corp Bond' },
         { type: 'stock', symbol: 'LQD', name: 'Low Risk Corp Bond' },
         { type: 'stock', symbol: 'UUP', name: 'US Dollar Index' }
