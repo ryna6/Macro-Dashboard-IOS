@@ -23,25 +23,22 @@ function tfLabel(tf) {
   return '1M';
 }
 
-export function createHeader({
-  onTimeframeChange,
-  onRefresh
-} = {}) {
+export function createHeader({ onTimeframeChange, onRefresh } = {}) {
   const root = el('header', 'app-header');
 
-  // Macro Dashboard (largest)
-  const title = el('div', 'app-title');
-  title.textContent = 'Macro Dashboard';
+  // Title (largest)
+  const titleEl = el('div', 'app-title');
+  titleEl.textContent = 'Macro Dashboard';
 
-  // Row with tab name (2nd largest) + controls
+  // Row with subtitle + controls
   const row = el('div', 'app-subrow');
 
-  const tabName = el('div', 'app-tabname');
-  tabName.textContent = '—';
+  const subtitleEl = el('div', 'app-tabname');
+  subtitleEl.textContent = '—';
 
   const controls = el('div', 'app-controls');
 
-  // Timeframe dropdown (single button)
+  // Timeframe dropdown
   const tfDD = el('div', 'dd');
   const tfBtn = el('button', 'dd-btn');
   tfBtn.type = 'button';
@@ -72,7 +69,7 @@ export function createHeader({
     tfMenu.hidden = !tfMenu.hidden;
   });
 
-  // Close menus on outside tap
+  // Close dropdown on outside click
   document.addEventListener('click', () => {
     tfMenu.hidden = true;
   });
@@ -98,36 +95,36 @@ export function createHeader({
   controls.appendChild(tfDD);
   controls.appendChild(refreshBtn);
 
-  row.appendChild(tabName);
+  row.appendChild(subtitleEl);
   row.appendChild(controls);
 
-  // Last updated line (small)
-  const updated = el('div', 'app-updated');
-  updated.textContent = 'Last updated —';
+  // Last updated line
+  const updatedEl = el('div', 'app-updated');
+  updatedEl.textContent = 'Last updated —';
 
-  root.appendChild(title);
+  root.appendChild(titleEl);
   root.appendChild(row);
-  root.appendChild(updated);
+  root.appendChild(updatedEl);
 
-  let timeframeVisible = true;
+  // Internal state
   let activeTf = TIMEFRAMES.ONE_DAY;
 
+  // Public API
   function setActiveTf(tf) {
     activeTf = tf;
     tfBtn.textContent = `${tfLabel(tf)} ▾`;
   }
 
   function setTimeframeVisible(visible) {
-    timeframeVisible = visible;
     tfDD.style.display = visible ? 'block' : 'none';
   }
 
   function setTabLongName(name) {
-    tabName.textContent = name || '—';
+    subtitleEl.textContent = name || '—';
   }
 
   function setLastUpdated(ms) {
-    updated.textContent = formatLastUpdatedET(ms);
+    updatedEl.textContent = formatLastUpdatedET(ms);
   }
 
   function setRefreshing(isRefreshing) {
@@ -136,16 +133,37 @@ export function createHeader({
     refreshBtn.classList.toggle('is-loading', !!isRefreshing);
   }
 
+  // ---- Compatibility aliases (fixes your console error) ----
+  // tabs.js expects these names in some versions.
+  function setTitle(text) {
+    titleEl.textContent = text || 'Macro Dashboard';
+  }
+
+  function setSubtitle(text) {
+    setTabLongName(text);
+  }
+
+  function setActiveTab(_tabId) {
+    // no-op for now (tabbar handles active styling)
+  }
+
   // defaults
   setActiveTf(activeTf);
   setTimeframeVisible(true);
 
   return {
     el: root,
+
+    // Primary API
     setActiveTf,
     setTimeframeVisible,
     setTabLongName,
     setLastUpdated,
-    setRefreshing
+    setRefreshing,
+
+    // Compatibility API
+    setTitle,
+    setSubtitle,
+    setActiveTab
   };
 }
