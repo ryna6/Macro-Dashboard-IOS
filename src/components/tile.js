@@ -1,3 +1,4 @@
+import { candleService } from '../data/candleService.js';
 import { quoteService } from '../data/quoteService.js';
 import { openTileExpanded } from './tileExpanded.js';
 
@@ -29,7 +30,7 @@ function drawSpark(canvas, points) {
   ctx.clearRect(0, 0, w, h);
 
   if (!points || points.length < 2) return;
-  const values = points.map((p) => p.p).filter((v) => Number.isFinite(v));
+  const values = points.map((p) => p?.p).filter((v) => Number.isFinite(v));
   if (values.length < 2) return;
 
   const min = Math.min(...values);
@@ -50,6 +51,16 @@ function drawSpark(canvas, points) {
   ctx.stroke();
 }
 
+function logoFallbackText(spec) {
+  const sym = String(spec?.symbol || '').toUpperCase();
+  // Nicely handle metal symbols
+  if (sym.startsWith('XAU')) return 'Au';
+  if (sym.startsWith('XAG')) return 'Ag';
+  if (sym.startsWith('XPT')) return 'Pt';
+  if (sym.startsWith('XPD')) return 'Pd';
+  return (sym || '?').slice(0, 1);
+}
+
 export function createTile({ tabId, symbolSpec, timeframe }) {
   const root = el('div', 'tile');
   root.role = 'button';
@@ -58,16 +69,26 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   const top = el('div', 'tile-top');
   const logo = el('div', 'tile-logo');
 
+  // Logo image (stocks/ETFs) + fallback text (metals/unknown)
   const logoImg = document.createElement('img');
   logoImg.className = 'tile-logo-img';
   logoImg.alt = '';
+  logoImg.decoding = 'async';
   logoImg.loading = 'lazy';
+  logoImg.referrerPolicy = 'no-referrer';
+  logoImg.hidden = true;
 
-  const logoText = el('div', 'tile-logo-text');
-  logoText.textContent = (symbolSpec.symbol || '?').slice(0, 1);
+  const logoFallback = el('span', 'tile-logo-fallback');
+  logoFallback.textContent = logoFallbackText(symbolSpec);
+
+  // If the logo URL 404s or is blocked, fall back to text.
+  logoImg.addEventListener('error', () => {
+    logoImg.hidden = true;
+    logoFallback.hidden = false;
+  });
 
   logo.appendChild(logoImg);
-  logo.appendChild(logoText);
+  logo.appendChild(logoFallback);
 
   const sym = el('div', 'tile-symbol');
   sym.textContent = symbolSpec.symbol;
@@ -81,48 +102,42 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   mid.appendChild(price);
   mid.appendChild(change);
 
-  // Bottom-right intraday badge (always 1D change)
-  const badge = el('div', 'tile-badge');
-  badge.textContent = '—';
-
   const spark = el('canvas', 'tile-spark');
   spark.width = 220;
-  spark.height = 64;
+  spark.height = 38;
 
   root.appendChild(top);
   root.appendChild(mid);
-  root.appendChild(badge);
   root.appendChild(spark);
 
   function update() {
     const snap = quoteService.getSnapshot(tabId, symbolSpec, timeframe);
+
+    const logoUrl = snap.logoUrl;
+    if (logoUrl && logoImg.dataset.src !== logoUrl) {
+      logoImg.dataset.src = logoUrl;
+      logoImg.src = logoUrl;
+      logoImg.hidden = false;
+      logoFallback.hidden = true;
+    } else if (!logoUrl) {
+      logoImg.hidden = true;
+      logoFallback.hidden = false;
+    }
+
     price.textContent = fmtPrice(snap.last);
 
     const pct = snap.changePct;
     change.textContent = fmtPct(pct);
 
-    // Whole-tile tint based on selected timeframe % change.
-    applyTileTint(root, pct);
+    change.classList.toggle('is-up', pct != null && pct > 0);
+    change.classList.toggle('is-down', pct != null && pct < 0);
 
-    // Intraday badge always uses intraday %
-    badge.textContent = fmtPct(snap.intradayPct);
-
-    // Logo
-    if (snap.logoUrl) {
-      logoImg.src = snap.logoUrl;
-      logoImg.style.display = 'block';
-      logoText.style.display = 'none';
-    } else {
-      logoImg.style.display = 'none';
-      logoText.style.display = 'grid';
-    }
-
-    drawSpark(spark, (snap.spark || []).slice(-30));
+    drawSpark(spark, (snap.spark || []).slice(-120));
   }
 
   function expand() {
-    // Candles may be plan-limited. Expanded view still opens as a popup.
-    const candles = [];
+    // Expanded view still attempts candles (you’ll swap provider next)
+    const candles = candleService.getCandles(tabId, symbolSpec, timeframe);
     openTileExpanded({
       symbol: symbolSpec.symbol,
       displayName: symbolSpec.symbol,
@@ -146,32 +161,4 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
 
   update();
   return { el: root, update };
-}
-
-// ---- tinting --------------------------------------------------------------
-
-function clamp01(x) {
-  if (!Number.isFinite(x)) return 0;
-  return Math.max(0, Math.min(1, x));
-}
-
-function applyTileTint(root, pct) {
-  if (!root) return;
-  if (pct == null || !Number.isFinite(pct)) {
-    root.style.setProperty('--tileTintA', '0.06');
-    root.style.setProperty('--tileTintR', '255');
-    root.style.setProperty('--tileTintG', '255');
-    root.style.setProperty('--tileTintB', '255');
-    return;
-  }
-
-  const sign = pct >= 0 ? 1 : -1;
-  const t = clamp01(Math.abs(pct) / 3.0); // 3% -> max tint
-  const a = 0.06 + t * 0.18;              // subtle -> stronger
-
-  const rgb = sign >= 0 ? [32, 197, 94] : [239, 68, 68]; // green / red
-  root.style.setProperty('--tileTintA', String(a));
-  root.style.setProperty('--tileTintR', String(rgb[0]));
-  root.style.setProperty('--tileTintG', String(rgb[1]));
-  root.style.setProperty('--tileTintB', String(rgb[2]));
 }
