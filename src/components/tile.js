@@ -56,11 +56,13 @@ function drawSpark(canvas, points) {
 
 function logoFallbackText(spec) {
   const sym = String(spec?.symbol || '').toUpperCase();
-  if (sym.startsWith('XAU')) return 'Au';
-  if (sym.startsWith('XAG')) return 'Ag';
-  if (sym.startsWith('XPT')) return 'Pt';
-  if (sym.startsWith('XPD')) return 'Pd';
   return (sym || '?').slice(0, 1);
+}
+
+function fixedLogoUrl(spec) {
+  if (spec?.logoUrl) return spec.logoUrl;
+  const sym = String(spec?.symbol || '').toUpperCase();
+  return sym ? `/icons/symbols/${sym}.png` : null;
 }
 
 export function createTile({ tabId, symbolSpec, timeframe }) {
@@ -71,14 +73,12 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   const top = el('div', 'tile-top');
   const logo = el('div', 'tile-logo');
 
-  // IMG + fallback text (MarketDB-style consumer of logoUrl)
+  // IMG + fallback text
   const img = document.createElement('img');
   img.alt = '';
   img.decoding = 'async';
   img.loading = 'lazy';
-  img.referrerPolicy = 'no-referrer';
 
-  // Make it work even if your CSS doesn’t yet define .tile-logo-img
   img.style.width = '100%';
   img.style.height = '100%';
   img.style.objectFit = 'contain';
@@ -97,7 +97,7 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   logo.appendChild(fallback);
 
   const sym = el('div', 'tile-symbol');
-  sym.textContent = symbolSpec.name || symbolSpec.symbol;
+  sym.textContent = symbolSpec.symbol;
 
   top.appendChild(logo);
   top.appendChild(sym);
@@ -121,11 +121,13 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   function paint() {
     const snap = quoteService.getSnapshot(tabId, symbolSpec, timeframe);
 
-    // logo
-    if (snap.logoUrl) {
-      if (img.dataset.src !== snap.logoUrl) {
-        img.dataset.src = snap.logoUrl;
-        img.src = snap.logoUrl;
+    // Prefer fixed local logo
+    const logoUrl = fixedLogoUrl(symbolSpec) || snap.logoUrl;
+
+    if (logoUrl) {
+      if (img.dataset.src !== logoUrl) {
+        img.dataset.src = logoUrl;
+        img.src = logoUrl;
       }
       img.style.display = 'block';
       fallback.style.display = 'none';
@@ -164,12 +166,10 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   }
 
   function expand() {
-    // Expanded view still uses candleService for now.
-    // If candle endpoint is restricted, the expanded chart may remain empty until you swap providers.
     const candles = candleService.getCandles(tabId, symbolSpec, timeframe);
     openTileExpanded({
       symbol: symbolSpec.symbol,
-      displayName: symbolSpec.symbol,
+      displayName: symbolSpec.name || symbolSpec.symbol,
       timeframeLabel: timeframe,
       candles
     });
@@ -188,7 +188,6 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
     }
   });
 
-  // Initial paint + lazy fetch
   update();
 
   return { el: root, update };
