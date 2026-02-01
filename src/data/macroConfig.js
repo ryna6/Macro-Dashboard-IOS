@@ -56,7 +56,7 @@ export const macroConfig = {
       id: 'calendar',
       kind: 'calendar',
       shortName: 'Calendar',
-      longName: 'Economic Calendar (US)'
+      longName: 'US Economic Calendar'
     }
   ]
 };
