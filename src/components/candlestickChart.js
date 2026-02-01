@@ -1,9 +1,7 @@
-// src/components/candlestickChart.js
 import { createChart, CrosshairMode } from 'lightweight-charts';
 import { nyTime } from '../data/time.js';
 
 function toSeriesData(candles) {
-  // lightweight-charts expects time in unix seconds for "UTCTimestamp"
   return (candles || []).map((c) => ({
     time: c.t,
     open: c.o,
@@ -13,12 +11,6 @@ function toSeriesData(candles) {
   }));
 }
 
-/**
- * renderCandlestickChart(container, candles, opts)
- * - Touch scrubbing: hold + drag
- * - Shows OHLC + time (NY)
- * - Prevents page scroll while interacting with chart
- */
 export function renderCandlestickChart(container, candles, opts = {}) {
   if (!container) return null;
   container.innerHTML = '';
@@ -30,20 +22,17 @@ export function renderCandlestickChart(container, candles, opts = {}) {
   chartEl.className = 'candle-chart-inner';
   container.appendChild(chartEl);
 
-  // Tooltip overlay (optional—nice for clarity on mobile)
   const tip = document.createElement('div');
   tip.className = 'candle-chart-tooltip';
   tip.style.display = 'none';
   container.appendChild(tip);
 
-  // Create chart (dark UI by default; style via CSS if you prefer)
   const chart = createChart(chartEl, {
     autoSize: true,
     layout: {
       background: { color: 'transparent' },
       textColor: 'rgba(255,255,255,0.85)',
-      fontFamily:
-        '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif',
       fontSize: 11
     },
     grid: {
@@ -61,7 +50,6 @@ export function renderCandlestickChart(container, candles, opts = {}) {
       vertLine: { color: 'rgba(255,255,255,0.35)', width: 1 },
       horzLine: { color: 'rgba(255,255,255,0.35)', width: 1 }
     },
-    // Disable scaling/scrolling of the chart (we want scrubbing, not panning/zooming)
     handleScroll: false,
     handleScale: false
   });
@@ -77,10 +65,9 @@ export function renderCandlestickChart(container, candles, opts = {}) {
   series.setData(data);
   chart.timeScale().fitContent();
 
-  // iOS: prevent the page/tab-view from scrolling while interacting
   const prevent = (e) => e.preventDefault();
   container.addEventListener('touchmove', prevent, { passive: false });
-  container.style.touchAction = 'none'; // helps on modern iOS
+  container.style.touchAction = 'none';
 
   let scrubbing = false;
 
@@ -102,7 +89,6 @@ export function renderCandlestickChart(container, candles, opts = {}) {
     tip.style.display = 'block';
 
     if (point) {
-      // Position tooltip near finger/crosshair point
       const rect = container.getBoundingClientRect();
       const x = Math.min(Math.max(8, point.x + 8), rect.width - 140);
       const y = Math.min(Math.max(8, point.y - 48), rect.height - 64);
@@ -110,7 +96,6 @@ export function renderCandlestickChart(container, candles, opts = {}) {
     }
   };
 
-  // Crosshair subscription fires on touch drag in lightweight-charts
   chart.subscribeCrosshairMove((param) => {
     if (!param || !param.time || !param.point) {
       if (!scrubbing) showTip(null);
@@ -123,11 +108,9 @@ export function renderCandlestickChart(container, candles, opts = {}) {
       return;
     }
 
-    // bar includes {open,high,low,close,time}
     showTip(bar, param.point);
   });
 
-  // Scrub mode: show tooltip only while pressing/dragging
   container.addEventListener('pointerdown', (e) => {
     scrubbing = true;
     tip.style.display = 'block';
