@@ -5,25 +5,15 @@
 }
 
 .tile {
-  /* Tile tint driven by JS (selected timeframe % change) */
-  background: rgba(
-    var(--tileTintR, 255),
-    var(--tileTintG, 255),
-    var(--tileTintB, 255),
-    var(--tileTintA, 0.06)
-  );
-
+  background: rgba(255, 255, 255, 0.06);
   border-radius: 16px;
-  padding: 12px;
-  min-height: 160px;
-
+  padding: 11px;
+  min-height: 112px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
   touch-action: manipulation;
-  position: relative;
 }
 
 .tile:active { transform: translateY(1px); }
@@ -52,15 +42,11 @@
   width: 100%;
   height: 100%;
   object-fit: contain;
-  border-radius: 999px;
-  display: none;
+  display: block;
 }
 
-.tile-logo-text {
-  width: 100%;
-  height: 100%;
-  display: grid;
-  place-items: center;
+.tile-logo-fallback {
+  line-height: 1;
 }
 
 .tile-symbol {
@@ -84,37 +70,17 @@
 }
 
 .tile-change {
-  font-size: 13px;
-  font-weight: 650;
-  color: rgba(255, 255, 255, 0.92); /* stays white per your spec */
-}
-
-.tile-badge {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-
-  width: 68px;
-  height: 32px;
-  border-radius: 10px;
-
-  display: grid;
-  place-items: center;
-
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 750;
-  color: rgba(255, 255, 255, 0.95);
-
-  background: rgba(0,0,0,0.20);
-  border: 1px solid rgba(255,255,255,0.10);
-
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  color: rgba(255, 255, 255, 0.70);
 }
+
+.tile-change.is-up { color: rgba(80, 255, 170, 0.95); }
+.tile-change.is-down { color: rgba(255, 105, 120, 0.95); }
 
 .tile-spark {
   width: 100%;
-  height: 64px;
+  height: 38px;
   margin-top: 8px;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.03);
