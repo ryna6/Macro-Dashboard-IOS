@@ -58,6 +58,9 @@ function renderCalendar(container, grouped) {
   });
 }
 
+/**
+ * Existing API (container is provided by caller).
+ */
 export function initCalendarView(container) {
   async function refresh({ force = false } = {}) {
     const { grouped } = await calendarService.getWeeklyUS({ force });
@@ -79,4 +82,22 @@ export function initCalendarView(container) {
   });
 
   return { refresh, renderFromCache };
+}
+
+/**
+ * Compatibility wrapper:
+ * Some versions of tabs.js expect `createCalendarView()` to return `{ el, refresh, ... }`.
+ * Exporting this prevents build breaks regardless of which version is currently deployed.
+ */
+export function createCalendarView() {
+  const container = document.createElement('div');
+  container.className = 'calendar-container';
+
+  const api = initCalendarView(container);
+
+  return {
+    el: container,
+    ...api,
+    getLastUpdatedMs: () => calendarService.getLastUpdatedMs?.() || 0
+  };
 }
