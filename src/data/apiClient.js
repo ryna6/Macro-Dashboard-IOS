@@ -7,10 +7,10 @@ const FINNHUB_BASE = 'https://finnhub.io/api/v1';
  */
 const FINNHUB_KEYS = {
   global: 'd4d73mhr01qovljoddigd4d73mhr01qovljoddj0',
-  metals: 'YOUR_FINNHUB_KEY_METALS',
+  metals: ' ',
   commo: 'YOUR_FINNHUB_KEY_COMMO',
-  rates: 'YOUR_FINNHUB_KEY_RATES',
-  calendar: 'YOUR_FINNHUB_KEY_CALENDAR' // optional (can reuse one above)
+  rates: ' ',
+  calendar: 'd4d73mhr01qovljoddigd4d73mhr01qovljoddj0' // optional (can reuse one above)
 };
 
 const DEFAULT_KEY = 'global';
