@@ -6,12 +6,12 @@ export const macroConfig = {
       shortName: 'Global',
       longName: 'Global Markets',
       symbols: [
-        { type: 'stock', symbol: 'SPY' },
-        { type: 'stock', symbol: 'QQQ' },
-        { type: 'stock', symbol: 'IEUR' },
-        { type: 'stock', symbol: 'EWJ' },
-        { type: 'stock', symbol: 'EWH' },
-        { type: 'stock', symbol: 'EWC' }
+        { type: 'stock', symbol: 'SPY', name: 'SPY' },
+        { type: 'stock', symbol: 'QQQ', name: 'QQQ' },
+        { type: 'stock', symbol: 'IEUR', name: 'EU Market ETF' },
+        { type: 'stock', symbol: 'EWJ', name: 'JP Market ETF' },
+        { type: 'stock', symbol: 'EWH', name: 'HK Market ETF' },
+        { type: 'stock', symbol: 'EWC', name: 'CA Market ETF' }
       ]
     },
     {
@@ -20,10 +20,10 @@ export const macroConfig = {
       shortName: 'Metals',
       longName: 'Precious Metals',
       symbols: [
-        { type: 'forex', symbol: 'XAUUSD' },
-        { type: 'forex', symbol: 'XAGUSD' },
-        { type: 'forex', symbol: 'XPTUSD' },
-        { type: 'forex', symbol: 'XPDUSD' }
+        { type: 'forex', symbol: 'XAUUSD', name: 'Gold' },
+        { type: 'forex', symbol: 'XAGUSD', name: 'Silver' },
+        { type: 'forex', symbol: 'XPTUSD', name: 'Platinum' },
+        { type: 'forex', symbol: 'XPDUSD', name: 'Palladium' }
       ]
     },
     {
@@ -32,10 +32,10 @@ export const macroConfig = {
       shortName: 'Commods',
       longName: 'Commodities',
       symbols: [
-        { type: 'stock', symbol: 'USO' },
-        { type: 'stock', symbol: 'BNO' },
-        { type: 'stock', symbol: 'UNG' },
-        { type: 'stock', symbol: 'CPER' }
+        { type: 'stock', symbol: 'USO', name: 'Crude Oil' },
+        { type: 'stock', symbol: 'BNO', name: 'Brent Crude' },
+        { type: 'stock', symbol: 'UNG', name: 'Natural Gas' },
+        { type: 'stock', symbol: 'CPER', name: 'Copper' }
       ]
     },
     {
@@ -44,12 +44,12 @@ export const macroConfig = {
       shortName: 'Rates',
       longName: 'US & Corporate Bonds',
       symbols: [
-        { type: 'stock', symbol: 'SHY' },
-        { type: 'stock', symbol: 'IEF' },
-        { type: 'stock', symbol: 'TLT' },
-        { type: 'stock', symbol: 'HYG' },
-        { type: 'stock', symbol: 'LQD' },
-        { type: 'stock', symbol: 'DXY', fallback: 'UUP' }
+        { type: 'stock', symbol: 'SHY', name: '1-3 Year Treasury Bond' },
+        { type: 'stock', symbol: 'IEF', name: '7-10 Year Treasury Bond' },
+        { type: 'stock', symbol: 'TLT', name: '20+ Year Treasury Bond' },
+        { type: 'stock', symbol: 'HYG', name: 'High-Yield Corp Bond (Higher Risk)' },
+        { type: 'stock', symbol: 'LQD', name: 'Investment-Grade Corp Bond (Lower Risk)' },
+        { type: 'stock', symbol: 'UUP', name: 'US Dollar Index' }
       ]
     },
     {
