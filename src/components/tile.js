@@ -1,4 +1,3 @@
-import { quoteService } from '../data/quoteService.js';
 import { candleService } from '../data/candleService.js';
 import { openTileExpanded } from './tileExpanded.js';
 
@@ -21,62 +20,44 @@ function fmtPct(x) {
   return `${sign}${x.toFixed(2)}%`;
 }
 
-function drawSpark(canvas, points) {
-  const ctx = canvas.getContext('2d');
+function drawSpark(canvas, candles) {
+  const ctx = canvas?.getContext?.('2d');
+  if (!ctx) return;
+
   const w = canvas.width;
   const h = canvas.height;
-
   ctx.clearRect(0, 0, w, h);
 
-  if (!Array.isArray(points) || points.length < 2) return;
+  if (!candles || candles.length < 2) return;
+  const closes = candles.map((c) => c.c).filter((v) => Number.isFinite(v));
+  if (closes.length < 2) return;
 
-  const ys = points.map((p) => p.p).filter((v) => Number.isFinite(v));
-  if (ys.length < 2) return;
-
-  const min = Math.min(...ys);
-  const max = Math.max(...ys);
+  const min = Math.min(...closes);
+  const max = Math.max(...closes);
   const range = max - min || 1;
 
   ctx.lineWidth = 1.5;
   ctx.beginPath();
 
-  for (let i = 0; i < points.length; i++) {
-    const x = (i / (points.length - 1)) * (w - 2) + 1;
-    const y = h - ((points[i].p - min) / range) * (h - 2) - 1;
+  closes.forEach((v, i) => {
+    const x = (i / (closes.length - 1)) * (w - 2) + 1;
+    const y = h - ((v - min) / range) * (h - 2) - 1;
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
-  }
+  });
 
   ctx.strokeStyle = 'rgba(255,255,255,0.65)';
   ctx.stroke();
 }
 
 export function createTile({ tabId, symbolSpec, timeframe }) {
-  let tf = timeframe;
-
-  // Use a DIV instead of <button> to avoid default button appearance quirks
   const root = el('div', 'tile');
   root.role = 'button';
   root.tabIndex = 0;
 
-  // Top row: logo + symbol
   const top = el('div', 'tile-top');
-
   const logo = el('div', 'tile-logo');
-  if (symbolSpec.logoUrl) {
-    const img = document.createElement('img');
-    img.alt = symbolSpec.symbol;
-    img.src = symbolSpec.logoUrl;
-    img.loading = 'lazy';
-    img.decoding = 'async';
-    img.style.width = '100%';
-    img.style.height = '100%';
-    img.style.borderRadius = '999px';
-    logo.textContent = '';
-    logo.appendChild(img);
-  } else {
-    logo.textContent = (symbolSpec.symbol || '?').slice(0, 1);
-  }
+  logo.textContent = (symbolSpec.symbol || '?').slice(0, 1);
 
   const sym = el('div', 'tile-symbol');
   sym.textContent = symbolSpec.symbol;
@@ -84,14 +65,12 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   top.appendChild(logo);
   top.appendChild(sym);
 
-  // Mid row: price + % change
   const mid = el('div', 'tile-mid');
   const price = el('div', 'tile-price');
   const change = el('div', 'tile-change');
   mid.appendChild(price);
   mid.appendChild(change);
 
-  // Sparkline canvas (CSS expects .tile-spark on the canvas)
   const spark = el('canvas', 'tile-spark');
   spark.width = 220;
   spark.height = 38;
@@ -101,25 +80,24 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   root.appendChild(spark);
 
   function update() {
-    const snap = quoteService.getSnapshot(tabId, symbolSpec, tf);
-
+    const snap = candleService.getSnapshot(tabId, symbolSpec, timeframe);
     price.textContent = fmtPrice(snap.last);
 
     const pct = snap.changePct;
     change.textContent = fmtPct(pct);
+
     change.classList.toggle('is-up', pct != null && pct > 0);
     change.classList.toggle('is-down', pct != null && pct < 0);
 
-    drawSpark(spark, snap.spark || []);
+    drawSpark(spark, (snap.candles || []).slice(-120));
   }
 
   function expand() {
-    // Candles are optional; if unavailable, expanded view shows empty-state message (per your tileExpanded.js)
-    const candles = candleService.getCandles?.(tabId, symbolSpec, tf) || [];
+    const candles = candleService.getCandles(tabId, symbolSpec, timeframe);
     openTileExpanded({
-      tabId,
-      symbolSpec,
-      timeframe: tf,
+      symbol: symbolSpec.symbol,
+      displayName: symbolSpec.symbol,
+      timeframeLabel: timeframe,
       candles
     });
   }
@@ -137,15 +115,6 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
     }
   });
 
-  // initial
   update();
-
-  return {
-    el: root,
-    update,
-    setTimeframe: (nextTf) => {
-      tf = nextTf;
-      update();
-    }
-  };
+  return { el: root, update };
 }
