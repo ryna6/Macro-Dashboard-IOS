@@ -12,14 +12,14 @@ const FINNHUB_BASE = 'https://finnhub.io/api/v1';
 
 // Keep empty in repo. For quick testing you can paste keys here temporarily.
 const FINNHUB_KEYS = {
-  global: '',
-  metals: '',
-  commo: '',
-  rates: '',
-  calendar: ''
+  global: 'd4d73mhr01qovljoddigd4d73mhr01qovljoddj0',
+  metals: 'd5s6af9r01qoo9r2t3a0d5s6af9r01qoo9r2t3ag ',
+  commo: 'd5s6af9r01qoo9r2t3a0d5s6af9r01qoo9r2t3ag ',
+  rates: 'd5s6jg1r01qoo9r2ukugd5s6jg1r01qoo9r2ukv0',
+  calendar: 'd5s6jg1r01qoo9r2ukugd5s6jg1r01qoo9r2ukv0'
 };
 
-const DEFAULT_FALLBACK_KEY = 'global';
+const DEFAULT_FALLBACK_KEY = 'calendar';
 
 function envKeyName(tabId) {
   return `VITE_FINNHUB_KEY_${String(tabId).toUpperCase()}`;
