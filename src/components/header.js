@@ -1,4 +1,11 @@
-import { TIMEFRAMES } from '../data/candleService.js';
+import { macroConfig } from '../data/macroConfig.js';
+import { candleService, TIMEFRAMES } from '../data/candleService.js';
+import { calendarService } from '../data/calendarService.js';
+import { createHeader } from './header.js';
+import { renderTileGrid } from './tileGrid.js';
+import { initCalendarView } from './calendarView.js';
+
+const FIVE_MIN_MS = 5 * 60 * 1000;
 
 function el(tag, className) {
   const n = document.createElement(tag);
@@ -6,164 +13,163 @@ function el(tag, className) {
   return n;
 }
 
-function formatLastUpdatedET(ms) {
-  if (!ms) return 'Last updated —';
-  const t = new Date(ms).toLocaleTimeString('en-US', {
-    timeZone: 'America/New_York',
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true
+export function initTabsApp(mountEl) {
+  const state = {
+    activeTabId: macroConfig.tabs[0].id, // default = Global
+    timeframe: TIMEFRAMES.ONE_DAY
+  };
+
+  const app = el('div', 'app');
+
+  const header = createHeader({
+    onTimeframeChange: (tf) => {
+      state.timeframe = tf;
+      header.setActiveTf(tf);
+      rerenderActive();
+    },
+    onRefresh: async () => {
+      await refreshActiveTab({ force: true, reason: 'manual' });
+    }
   });
-  return `Last updated ${t}`;
-}
 
-function tfLabel(tf) {
-  if (tf === TIMEFRAMES.ONE_DAY) return '1D';
-  if (tf === TIMEFRAMES.ONE_WEEK) return '1W';
-  return '1M';
-}
+  const main = el('main', 'app-main');
+  const tabbar = el('nav', 'tabbar');
 
-export function createHeader({ onTimeframeChange, onRefresh } = {}) {
-  const root = el('header', 'app-header');
+  const views = new Map(); // tabId -> { viewEl, kind }
 
-  // Title (largest)
-  const titleEl = el('div', 'app-title');
-  titleEl.textContent = 'Macro Dashboard';
+  macroConfig.tabs.forEach((t) => {
+    const view = el('section', 'tab-view');
+    view.dataset.tab = t.id;
 
-  // Row with subtitle + controls
-  const row = el('div', 'app-subrow');
+    if (t.kind === 'macro') {
+      const grid = el('div', 'tile-grid-host');
+      view.appendChild(grid);
+    } else {
+      const cal = el('div', 'calendar-container');
+      view.appendChild(cal);
+    }
 
-  const subtitleEl = el('div', 'app-tabname');
-  subtitleEl.textContent = '—';
+    main.appendChild(view);
+    views.set(t.id, { viewEl: view, kind: t.kind });
+  });
 
-  const controls = el('div', 'app-controls');
-
-  // Timeframe dropdown
-  const tfDD = el('div', 'dd');
-  const tfBtn = el('button', 'dd-btn');
-  tfBtn.type = 'button';
-  tfBtn.textContent = '1D ▾';
-
-  const tfMenu = el('div', 'dd-menu');
-  tfMenu.hidden = true;
-
-  const tfItems = [
-    { tf: TIMEFRAMES.ONE_DAY, label: '1D' },
-    { tf: TIMEFRAMES.ONE_WEEK, label: '1W' },
-    { tf: TIMEFRAMES.ONE_MONTH, label: '1M' }
-  ];
-
-  tfItems.forEach((it) => {
-    const b = el('button', 'dd-item');
+  macroConfig.tabs.forEach((t) => {
+    const b = el('button', 'tab-btn');
     b.type = 'button';
-    b.textContent = it.label;
-    b.addEventListener('click', () => {
-      tfMenu.hidden = true;
-      onTimeframeChange?.(it.tf);
+    b.textContent = t.shortName;
+    b.dataset.tab = t.id;
+    b.addEventListener('click', () => setActiveTab(t.id));
+    tabbar.appendChild(b);
+  });
+
+  app.appendChild(header.el);
+  app.appendChild(main);
+  app.appendChild(tabbar);
+
+  mountEl.innerHTML = '';
+  mountEl.appendChild(app);
+
+  // Calendar wiring
+  let calendar = null;
+  function ensureCalendarInit() {
+    const entry = views.get('calendar');
+    if (!entry) return;
+
+    const container = entry.viewEl.querySelector('.calendar-container');
+    if (!container) return;
+
+    if (!calendar) {
+      calendar = initCalendarView(container);
+    }
+  }
+
+  function updateTabbar() {
+    tabbar.querySelectorAll('.tab-btn').forEach((b) => {
+      b.classList.toggle('is-active', b.dataset.tab === state.activeTabId);
     });
-    tfMenu.appendChild(b);
-  });
-
-  tfBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    tfMenu.hidden = !tfMenu.hidden;
-  });
-
-  // Close dropdown on outside click
-  document.addEventListener('click', () => {
-    tfMenu.hidden = true;
-  });
-
-  tfDD.appendChild(tfBtn);
-  tfDD.appendChild(tfMenu);
-
-  // Refresh button (no dropdown) + spinner
-  const refreshBtn = el('button', 'refresh-btn');
-  refreshBtn.type = 'button';
-
-  const refreshText = el('span', 'refresh-text');
-  refreshText.textContent = 'Refresh';
-
-  const spinner = el('span', 'spinner');
-  spinner.hidden = true;
-
-  refreshBtn.appendChild(refreshText);
-  refreshBtn.appendChild(spinner);
-
-  refreshBtn.addEventListener('click', () => onRefresh?.());
-
-  controls.appendChild(tfDD);
-  controls.appendChild(refreshBtn);
-
-  row.appendChild(subtitleEl);
-  row.appendChild(controls);
-
-  // Last updated line
-  const updatedEl = el('div', 'app-updated');
-  updatedEl.textContent = 'Last updated —';
-
-  root.appendChild(titleEl);
-  root.appendChild(row);
-  root.appendChild(updatedEl);
-
-  // Internal state
-  let activeTf = TIMEFRAMES.ONE_DAY;
-
-  // Public API
-  function setActiveTf(tf) {
-    activeTf = tf;
-    tfBtn.textContent = `${tfLabel(tf)} ▾`;
   }
 
-  function setTimeframeVisible(visible) {
-    tfDD.style.display = visible ? 'block' : 'none';
+  function showActiveView() {
+    views.forEach(({ viewEl }, tabId) => {
+      viewEl.classList.toggle('is-active', tabId === state.activeTabId);
+    });
   }
 
-  function setTabLongName(name) {
-    subtitleEl.textContent = name || '—';
+  function updateHeaderForActiveTab() {
+    const tab = macroConfig.tabs.find((t) => t.id === state.activeTabId);
+    header.setTabLongName(tab?.longName || '—');
+
+    if (tab?.kind === 'calendar') {
+      header.setTimeframeVisible(false);
+      // last updated for calendar comes from calendar cache
+      header.setLastUpdated(calendarService.getLastFetchMs?.() || null);
+    } else {
+      header.setTimeframeVisible(true);
+      header.setActiveTf(state.timeframe);
+      header.setLastUpdated(candleService.getTabLastUpdatedMs(state.activeTabId));
+    }
   }
 
-  function setLastUpdated(ms) {
-    updatedEl.textContent = formatLastUpdatedET(ms);
+  function rerenderActive() {
+    const tab = macroConfig.tabs.find((t) => t.id === state.activeTabId);
+    if (!tab) return;
+
+    if (tab.kind === 'macro') {
+      const { viewEl } = views.get(tab.id);
+      const host = viewEl.querySelector('.tile-grid-host');
+      renderTileGrid(host, { tabId: tab.id, timeframe: state.timeframe });
+      header.setLastUpdated(candleService.getTabLastUpdatedMs(tab.id));
+    } else {
+      ensureCalendarInit();
+      calendar?.renderFromCache?.();
+      header.setLastUpdated(calendarService.getLastFetchMs?.() || null);
+    }
   }
 
-  function setRefreshing(isRefreshing) {
-    spinner.hidden = !isRefreshing;
-    refreshBtn.disabled = !!isRefreshing;
-    refreshBtn.classList.toggle('is-loading', !!isRefreshing);
+  async function refreshActiveTab({ force = false, reason = 'auto' } = {}) {
+    const tab = macroConfig.tabs.find((t) => t.id === state.activeTabId);
+    if (!tab) return;
+
+    header.setRefreshing(true);
+
+    try {
+      if (tab.kind === 'macro') {
+        await candleService.prefetchTab(tab.id, { reason, force });
+        header.setLastUpdated(candleService.getTabLastUpdatedMs(tab.id));
+        rerenderActive();
+      } else {
+        ensureCalendarInit();
+        await calendar?.refresh?.({ force: true });
+        header.setLastUpdated(calendarService.getLastFetchMs?.() || null);
+      }
+    } finally {
+      header.setRefreshing(false);
+    }
   }
 
-  // ---- Compatibility aliases (fixes your console error) ----
-  // tabs.js expects these names in some versions.
-  function setTitle(text) {
-    titleEl.textContent = text || 'Macro Dashboard';
+  function setActiveTab(tabId) {
+    state.activeTabId = tabId;
+    updateTabbar();
+    showActiveView();
+    updateHeaderForActiveTab();
+
+    // Render quickly from cache
+    rerenderActive();
   }
 
-  function setSubtitle(text) {
-    setTabLongName(text);
-  }
-
-  function setActiveTab(_tabId) {
-    // no-op for now (tabbar handles active styling)
-  }
-
-  // defaults
-  setActiveTf(activeTf);
-  setTimeframeVisible(true);
+  // initial view
+  setActiveTab(state.activeTabId);
 
   return {
-    el: root,
+    startAutoRefresh() {
+      // On open: refresh active tab only (no keys required to see UI; it’ll fail gracefully)
+      refreshActiveTab({ force: false, reason: 'startup' });
 
-    // Primary API
-    setActiveTf,
-    setTimeframeVisible,
-    setTabLongName,
-    setLastUpdated,
-    setRefreshing,
+      const id = setInterval(() => {
+        refreshActiveTab({ force: false, reason: 'timer' });
+      }, FIVE_MIN_MS);
 
-    // Compatibility API
-    setTitle,
-    setSubtitle,
-    setActiveTab
+      return () => clearInterval(id);
+    }
   };
 }
