@@ -1,4 +1,3 @@
-// src/data/storage.js
 export const storage = {
   getJSON(key) {
     try {
