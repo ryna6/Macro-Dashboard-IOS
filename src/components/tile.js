@@ -1,3 +1,4 @@
+import { quoteService } from '../data/quoteService.js';
 import { candleService } from '../data/candleService.js';
 import { openTileExpanded } from './tileExpanded.js';
 
@@ -9,9 +10,8 @@ function el(tag, className) {
 
 function fmtPrice(x) {
   if (x == null || !Number.isFinite(x)) return '—';
-  const abs = Math.abs(x);
-  const decimals = abs < 10 ? 4 : abs < 1000 ? 2 : 1;
-  return x.toFixed(decimals);
+  // Keep it clean: 2 decimals, but avoid trailing .00 for large ETFs if you want later.
+  return x.toFixed(2);
 }
 
 function fmtPct(x) {
@@ -20,101 +20,109 @@ function fmtPct(x) {
   return `${sign}${x.toFixed(2)}%`;
 }
 
-function drawSpark(canvas, candles) {
-  const ctx = canvas?.getContext?.('2d');
-  if (!ctx) return;
-
+function drawSpark(canvas, points) {
+  const ctx = canvas.getContext('2d');
   const w = canvas.width;
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
 
-  if (!candles || candles.length < 2) return;
-  const closes = candles.map((c) => c.c).filter((v) => Number.isFinite(v));
-  if (closes.length < 2) return;
+  if (!Array.isArray(points) || points.length < 2) return;
 
-  const min = Math.min(...closes);
-  const max = Math.max(...closes);
-  const range = max - min || 1;
+  const ys = points.map(p => p.p).filter(Number.isFinite);
+  if (ys.length < 2) return;
 
-  ctx.lineWidth = 1.5;
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const range = (maxY - minY) || 1;
+
+  ctx.globalAlpha = 0.85;
+  ctx.lineWidth = 1;
+
   ctx.beginPath();
-
-  closes.forEach((v, i) => {
-    const x = (i / (closes.length - 1)) * (w - 2) + 1;
-    const y = h - ((v - min) / range) * (h - 2) - 1;
+  for (let i = 0; i < points.length; i++) {
+    const x = (i / (points.length - 1)) * (w - 2) + 1;
+    const y = h - 1 - ((points[i].p - minY) / range) * (h - 2);
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
-  });
-
-  ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+  }
   ctx.stroke();
+  ctx.globalAlpha = 1;
 }
 
 export function createTile({ tabId, symbolSpec, timeframe }) {
-  const root = el('div', 'tile');
-  root.role = 'button';
-  root.tabIndex = 0;
+  let tf = timeframe;
+
+  const root = el('button', 'tile');
+  root.type = 'button';
 
   const top = el('div', 'tile-top');
-  const logo = el('div', 'tile-logo');
-  logo.textContent = (symbolSpec.symbol || '?').slice(0, 1);
+  const id = el('div', 'tile-id');
 
-  const sym = el('div', 'tile-symbol');
-  sym.textContent = symbolSpec.symbol;
-
-  top.appendChild(logo);
-  top.appendChild(sym);
-
-  const mid = el('div', 'tile-mid');
-  const price = el('div', 'tile-price');
-  const change = el('div', 'tile-change');
-  mid.appendChild(price);
-  mid.appendChild(change);
-
-  const spark = el('canvas', 'tile-spark');
-  spark.width = 220;
-  spark.height = 38;
-
-  root.appendChild(top);
-  root.appendChild(mid);
-  root.appendChild(spark);
-
-  function update() {
-    const snap = candleService.getSnapshot(tabId, symbolSpec, timeframe);
-    price.textContent = fmtPrice(snap.last);
-
-    const pct = snap.changePct;
-    change.textContent = fmtPct(pct);
-
-    change.classList.toggle('is-up', pct != null && pct > 0);
-    change.classList.toggle('is-down', pct != null && pct < 0);
-
-    drawSpark(spark, (snap.candles || []).slice(-120));
+  const logoWrap = el('div', 'tile-logo');
+  if (symbolSpec.logoUrl) {
+    const img = el('img');
+    img.alt = symbolSpec.symbol;
+    img.src = symbolSpec.logoUrl;
+    logoWrap.appendChild(img);
+  } else {
+    logoWrap.textContent = symbolSpec.symbol.slice(0, 1);
   }
 
-  function expand() {
-    const candles = candleService.getCandles(tabId, symbolSpec, timeframe);
+  const sym = el('div', 'tile-sym');
+  sym.textContent = symbolSpec.symbol;
+
+  id.appendChild(logoWrap);
+  id.appendChild(sym);
+
+  const price = el('div', 'tile-price');
+  const chg = el('div', 'tile-chg');
+
+  top.appendChild(id);
+  top.appendChild(price);
+  top.appendChild(chg);
+
+  const sparkWrap = el('div', 'tile-spark');
+  const canvas = el('canvas');
+  canvas.width = 180;
+  canvas.height = 44;
+  sparkWrap.appendChild(canvas);
+
+  root.appendChild(top);
+  root.appendChild(sparkWrap);
+
+  function render() {
+    const snap = quoteService.getSnapshot(tabId, symbolSpec, tf);
+    price.textContent = fmtPrice(snap.last);
+    chg.textContent = fmtPct(snap.changePct);
+
+    chg.classList.toggle('pos', (snap.changePct ?? 0) > 0);
+    chg.classList.toggle('neg', (snap.changePct ?? 0) < 0);
+
+    drawSpark(canvas, snap.spark);
+  }
+
+  async function expand() {
+    // Candles are optional now; if premium is missing, this will fail and expanded view will show a friendly message.
+    let candles = [];
+    try {
+      candles = await candleService.getCandles(tabId, symbolSpec, tf);
+    } catch {
+      candles = [];
+    }
+
     openTileExpanded({
-      symbol: symbolSpec.symbol,
-      displayName: symbolSpec.symbol,
-      timeframeLabel: timeframe,
+      tabId,
+      symbolSpec,
+      timeframe: tf,
       candles
     });
   }
 
-  root.addEventListener('click', () => {
-    update();
-    expand();
-  });
+  root.addEventListener('click', expand);
 
-  root.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      update();
-      expand();
-    }
-  });
-
-  update();
-  return { el: root, update };
+  return {
+    el: root,
+    update: render,
+    setTimeframe: (nextTf) => { tf = nextTf; render(); }
+  };
 }
