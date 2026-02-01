@@ -3,7 +3,6 @@ const CACHE_NAME = 'macro-dashboard-shell-v1';
 const PRECACHE_URLS = [
   '/',
   '/index.html',
-  '/manifest.json',
   '/icons/Icon-192x192.png',
   '/icons/Icon-512x512.png'
 ];
