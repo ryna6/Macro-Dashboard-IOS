@@ -33,7 +33,7 @@ export const macroConfig = {
       longName: 'Commodities',
       symbols: [
         { type: 'stock', symbol: 'USO', name: 'Crude Oil' },
-        { type: 'stock', symbol: 'BNO', name: 'Brent Crude' },
+        { type: 'stock', symbol: 'BNO', name: 'Brent Oil' },
         { type: 'stock', symbol: 'UNG', name: 'Natural Gas' },
         { type: 'stock', symbol: 'CPER', name: 'Copper' }
       ]
