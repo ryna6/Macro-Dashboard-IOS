@@ -1,4 +1,3 @@
-// src/data/macroConfig.js
 export const macroConfig = {
   tabs: [
     {
@@ -42,7 +41,7 @@ export const macroConfig = {
     {
       id: 'rates',
       kind: 'macro',
-      shortName: 'Bonds',
+      shortName: 'Rates',
       longName: 'US & Corporate Bonds',
       symbols: [
         { type: 'stock', symbol: 'SHY' },
@@ -50,8 +49,6 @@ export const macroConfig = {
         { type: 'stock', symbol: 'TLT' },
         { type: 'stock', symbol: 'HYG' },
         { type: 'stock', symbol: 'LQD' },
-
-        // Attempt DXY first; if it’s problematic, you can swap to UUP in config.
         { type: 'stock', symbol: 'DXY', fallback: 'UUP' }
       ]
     },
