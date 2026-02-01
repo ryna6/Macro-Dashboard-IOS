@@ -1,4 +1,3 @@
-// src/components/header.js
 import { TIMEFRAMES } from '../data/candleService.js';
 
 function el(tag, className) {
@@ -7,23 +6,34 @@ function el(tag, className) {
   return n;
 }
 
-function fmtLastUpdated(ms) {
+function formatLastUpdatedET(ms) {
   if (!ms) return 'Last updated —';
-  const d = new Date(ms);
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return `Last updated ${hh}:${mm}`;
+  const t = new Date(ms).toLocaleTimeString('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  });
+  return `Last updated ${t}`;
+}
+
+function tfLabel(tf) {
+  if (tf === TIMEFRAMES.ONE_DAY) return '1D';
+  if (tf === TIMEFRAMES.ONE_WEEK) return '1W';
+  return '1M';
 }
 
 export function createHeader({
   onTimeframeChange,
-  onRefreshAction
+  onRefresh
 } = {}) {
   const root = el('header', 'app-header');
 
+  // Macro Dashboard (largest)
   const title = el('div', 'app-title');
   title.textContent = 'Macro Dashboard';
 
+  // Row with tab name (2nd largest) + controls
   const row = el('div', 'app-subrow');
 
   const tabName = el('div', 'app-tabname');
@@ -31,69 +41,67 @@ export function createHeader({
 
   const controls = el('div', 'app-controls');
 
-  // Timeframe segmented control
-  const tfWrap = el('div', 'tf-wrap');
+  // Timeframe dropdown (single button)
+  const tfDD = el('div', 'dd');
+  const tfBtn = el('button', 'dd-btn');
+  tfBtn.type = 'button';
+  tfBtn.textContent = '1D ▾';
 
-  const tfBtns = [
-    { key: TIMEFRAMES.ONE_DAY, label: '1D' },
-    { key: TIMEFRAMES.ONE_WEEK, label: '1W' },
-    { key: TIMEFRAMES.ONE_MONTH, label: '1M' }
-  ].map(({ key, label }) => {
-    const b = el('button', 'tf-btn');
+  const tfMenu = el('div', 'dd-menu');
+  tfMenu.hidden = true;
+
+  const tfItems = [
+    { tf: TIMEFRAMES.ONE_DAY, label: '1D' },
+    { tf: TIMEFRAMES.ONE_WEEK, label: '1W' },
+    { tf: TIMEFRAMES.ONE_MONTH, label: '1M' }
+  ];
+
+  tfItems.forEach((it) => {
+    const b = el('button', 'dd-item');
     b.type = 'button';
-    b.textContent = label;
-    b.dataset.tf = key;
-    b.addEventListener('click', () => onTimeframeChange?.(key));
-    tfWrap.appendChild(b);
-    return b;
-  });
-
-  // Refresh dropdown
-  const dd = el('div', 'dd');
-  const ddBtn = el('button', 'dd-btn');
-  ddBtn.type = 'button';
-  ddBtn.textContent = 'Refresh ▾';
-
-  const ddMenu = el('div', 'dd-menu');
-  ddMenu.hidden = true;
-
-  function setMenu(items) {
-    ddMenu.innerHTML = '';
-    items.forEach((it) => {
-      const btn = el('button', 'dd-item');
-      btn.type = 'button';
-      btn.textContent = it.label;
-      btn.addEventListener('click', () => {
-        ddMenu.hidden = true;
-        onRefreshAction?.(it.action);
-      });
-      ddMenu.appendChild(btn);
+    b.textContent = it.label;
+    b.addEventListener('click', () => {
+      tfMenu.hidden = true;
+      onTimeframeChange?.(it.tf);
     });
-  }
-
-  function openMenu() {
-    ddMenu.hidden = false;
-  }
-  function closeMenu() {
-    ddMenu.hidden = true;
-  }
-
-  ddBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    ddMenu.hidden ? openMenu() : closeMenu();
+    tfMenu.appendChild(b);
   });
 
-  document.addEventListener('click', () => closeMenu());
+  tfBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    tfMenu.hidden = !tfMenu.hidden;
+  });
 
-  dd.appendChild(ddBtn);
-  dd.appendChild(ddMenu);
+  // Close menus on outside tap
+  document.addEventListener('click', () => {
+    tfMenu.hidden = true;
+  });
 
-  controls.appendChild(tfWrap);
-  controls.appendChild(dd);
+  tfDD.appendChild(tfBtn);
+  tfDD.appendChild(tfMenu);
+
+  // Refresh button (no dropdown) + spinner
+  const refreshBtn = el('button', 'refresh-btn');
+  refreshBtn.type = 'button';
+
+  const refreshText = el('span', 'refresh-text');
+  refreshText.textContent = 'Refresh';
+
+  const spinner = el('span', 'spinner');
+  spinner.hidden = true;
+
+  refreshBtn.appendChild(refreshText);
+  refreshBtn.appendChild(spinner);
+
+  refreshBtn.addEventListener('click', () => onRefresh?.());
+
+  controls.appendChild(tfDD);
+  controls.appendChild(refreshBtn);
 
   row.appendChild(tabName);
   row.appendChild(controls);
 
+  // Last updated line (small)
   const updated = el('div', 'app-updated');
   updated.textContent = 'Last updated —';
 
@@ -101,19 +109,17 @@ export function createHeader({
   root.appendChild(row);
   root.appendChild(updated);
 
-  let showTimeframes = true;
+  let timeframeVisible = true;
   let activeTf = TIMEFRAMES.ONE_DAY;
 
   function setActiveTf(tf) {
     activeTf = tf;
-    tfBtns.forEach((b) => {
-      b.classList.toggle('is-active', b.dataset.tf === tf);
-    });
+    tfBtn.textContent = `${tfLabel(tf)} ▾`;
   }
 
   function setTimeframeVisible(visible) {
-    showTimeframes = visible;
-    tfWrap.style.display = visible ? 'flex' : 'none';
+    timeframeVisible = visible;
+    tfDD.style.display = visible ? 'block' : 'none';
   }
 
   function setTabLongName(name) {
@@ -121,28 +127,18 @@ export function createHeader({
   }
 
   function setLastUpdated(ms) {
-    updated.textContent = fmtLastUpdated(ms);
+    updated.textContent = formatLastUpdatedET(ms);
   }
 
-  function setRefreshMenuForTab(kind) {
-    // kind: "macro" | "calendar"
-    if (kind === 'calendar') {
-      setMenu([
-        { label: 'Refresh calendar', action: 'refresh_calendar' },
-        { label: 'Clear calendar cache', action: 'clear_calendar_cache' }
-      ]);
-    } else {
-      setMenu([
-        { label: 'Refresh tab', action: 'refresh_tab' },
-        { label: 'Refresh all (1–4)', action: 'refresh_all' },
-        { label: 'Clear macro cache', action: 'clear_macro_cache' }
-      ]);
-    }
+  function setRefreshing(isRefreshing) {
+    spinner.hidden = !isRefreshing;
+    refreshBtn.disabled = !!isRefreshing;
+    refreshBtn.classList.toggle('is-loading', !!isRefreshing);
   }
 
   // defaults
   setActiveTf(activeTf);
-  setRefreshMenuForTab('macro');
+  setTimeframeVisible(true);
 
   return {
     el: root,
@@ -150,6 +146,6 @@ export function createHeader({
     setTimeframeVisible,
     setTabLongName,
     setLastUpdated,
-    setRefreshMenuForTab
+    setRefreshing
   };
 }
