@@ -1,6 +1,7 @@
 // src/data/apiClient.js
 const FINNHUB_BASE = 'https://finnhub.io/api/v1';
 
+const DEFAULT_KEY = 'calendar';
 /**
  * One Finnhub key per macro tab (1–4). Calendar can be separate or reused.
  * Replace these with your real keys.
@@ -13,148 +14,95 @@ const FINNHUB_KEYS = {
   calendar: 'd5s6jg1r01qoo9r2ukugd5s6jg1r01qoo9r2ukv0'
 };
 
-const DEFAULT_KEY = 'rates';
+function envKeyName(keyName) {
+  return `VITE_FINNHUB_KEY_${String(keyName || '').toUpperCase()}`;
+}
 
-/**
- * Basic per-key request queue + spacing to be rate-limit aware.
- * (Finnhub free tiers can be tight; spacing + retries helps a lot.)
- */
-const queueState = new Map(); // keyName -> { tail: Promise, lastReqMs: number }
+function readToken(keyName) {
+  const fromLs = (typeof window !== 'undefined' && window.localStorage)
+    ? window.localStorage.getItem(`finnhub:key:${keyName}`) || ''
+    : '';
 
-const MIN_SPACING_MS = 160; // small spacing between calls per key
-const MAX_RETRIES = 3;
+  const fromEnv = (typeof import.meta !== 'undefined' && import.meta.env)
+    ? (import.meta.env[envKeyName(keyName)] || '')
+    : '';
 
-function sleep(ms, signal) {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'));
-    const t = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(t);
-        reject(new DOMException('Aborted', 'AbortError'));
-      },
-      { once: true }
-    );
-  });
+  const fromHardcode = FINNHUB_KEYS[keyName] || '';
+
+  // Priority: localStorage → env → hardcode
+  return String(fromLs || fromEnv || fromHardcode || '').trim();
+}
+
+function isPlaceholder(token) {
+  if (!token) return true;
+  if (token.startsWith('YOUR_')) return true;
+  if (token.length < 8) return true;
+  return false;
 }
 
 function pickToken(keyName) {
-  const k = keyName && FINNHUB_KEYS[keyName] ? keyName : DEFAULT_KEY;
-  const token = FINNHUB_KEYS[k];
-  if (!token || token.startsWith('YOUR_')) {
-    // Allow app to run, but make the misconfig obvious:
-    console.warn(`[apiClient] Missing/placeholder Finnhub token for keyName="${k}".`);
+  const wanted = keyName || DEFAULT_KEY;
+  let token = readToken(wanted);
+  if (!isPlaceholder(token)) return token;
+
+  // fallback to global for dev convenience
+  if (wanted !== DEFAULT_KEY) {
+    token = readToken(DEFAULT_KEY);
+    if (!isPlaceholder(token)) return token;
   }
-  return token;
+  return '';
 }
 
-async function fetchJsonWithRetry(url, { signal } = {}) {
-  let attempt = 0;
-  let backoffMs = 400;
-
-  while (true) {
-    const res = await fetch(url, { signal });
-
-    if (res.status === 429) {
-      if (attempt >= MAX_RETRIES) throw new Error('rate-limit');
-      const retryAfter = res.headers.get('retry-after');
-      const waitMs = retryAfter ? Number(retryAfter) * 1000 : backoffMs;
-      await sleep(Math.max(250, waitMs), signal);
-      attempt += 1;
-      backoffMs *= 2;
-      continue;
-    }
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`HTTP ${res.status}${text ? `: ${text}` : ''}`);
-    }
-
-    return res.json();
+async function fetchJson(url, signal) {
+  const res = await fetch(url, { signal, cache: 'no-store' });
+  const text = await res.text();
+  let data;
+  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+  if (!res.ok) {
+    const msg = data?.error || data?.message || `HTTP ${res.status}`;
+    throw new Error(msg);
   }
+  return data;
 }
 
-function enqueue(keyName, fn) {
-  const state = queueState.get(keyName) || {
-    tail: Promise.resolve(),
-    lastReqMs: 0
-  };
-
-  const run = async () => {
-    const since = Date.now() - state.lastReqMs;
-    if (since < MIN_SPACING_MS) {
-      await sleep(MIN_SPACING_MS - since);
-    }
-    state.lastReqMs = Date.now();
-    return fn();
-  };
-
-  const p = state.tail.then(run, run);
-
-  // Keep queue alive even if this request fails
-  state.tail = p.catch(() => {});
-  queueState.set(keyName, state);
-
-  return p;
-}
-
-function buildUrl(pathAndQuery, token) {
-  const joiner = pathAndQuery.includes('?') ? '&' : '?';
-  return `${FINNHUB_BASE}${pathAndQuery}${joiner}token=${encodeURIComponent(token)}`;
+function buildUrl(path, params, keyName) {
+  const token = pickToken(keyName);
+  if (!token) throw new Error(`Missing Finnhub API key for tab "${keyName}"`);
+  const usp = new URLSearchParams({ ...params, token });
+  return `${BASE}${path}?${usp.toString()}`;
 }
 
 export const apiClient = {
-  /**
-   * Generic Finnhub call (queued per keyName).
-   */
-  finnhub(pathAndQuery, opts = {}) {
-    const keyName = opts.keyName || DEFAULT_KEY;
-    const token = pickToken(keyName);
-    const url = buildUrl(pathAndQuery, token);
-
-    return enqueue(keyName, () => fetchJsonWithRetry(url, { signal: opts.signal }));
+  // Quotes (overview tiles)
+  quote: (keyName, symbol, signal) => {
+    const url = buildUrl('/quote', { symbol }, keyName);
+    return fetchJson(url, signal);
   },
 
-  /**
-   * Stock candles (ETFs, rates ETFs, etc.) via /stock/candle :contentReference[oaicite:3]{index=3}
-   */
-  stockCandles({ symbol, resolution, from, to, keyName, signal }) {
-    const q =
-      `/stock/candle?symbol=${encodeURIComponent(symbol)}` +
-      `&resolution=${encodeURIComponent(resolution)}` +
-      `&from=${encodeURIComponent(from)}` +
-      `&to=${encodeURIComponent(to)}`;
-    return this.finnhub(q, { keyName, signal });
+  // Candles (may be premium depending on your plan)
+  stockCandles: (keyName, symbol, resolution, from, to, signal) => {
+    const url = buildUrl('/stock/candle', { symbol, resolution, from, to }, keyName);
+    return fetchJson(url, signal);
   },
 
-  /**
-   * Forex candles via /forex/candle (metals FX pairs) :contentReference[oaicite:4]{index=4}
-   */
-  forexCandles({ symbol, resolution, from, to, keyName, signal }) {
-    const q =
-      `/forex/candle?symbol=${encodeURIComponent(symbol)}` +
-      `&resolution=${encodeURIComponent(resolution)}` +
-      `&from=${encodeURIComponent(from)}` +
-      `&to=${encodeURIComponent(to)}`;
-    return this.finnhub(q, { keyName, signal });
+  forexExchanges: (keyName, signal) => {
+    const url = buildUrl('/forex/exchange', {}, keyName);
+    return fetchJson(url, signal);
   },
 
-  /**
-   * Forex symbol discovery via /forex/symbol?exchange=OANDA :contentReference[oaicite:5]{index=5}
-   */
-  forexSymbols({ exchange = 'OANDA', keyName, signal }) {
-    const q = `/forex/symbol?exchange=${encodeURIComponent(exchange)}`;
-    return this.finnhub(q, { keyName, signal });
+  forexSymbols: (keyName, exchange, signal) => {
+    const url = buildUrl('/forex/symbol', { exchange }, keyName);
+    return fetchJson(url, signal);
   },
 
-  /**
-   * Economic calendar via /calendar/economic :contentReference[oaicite:6]{index=6}
-   */
-  economicCalendar({ from, to, keyName, signal }) {
-    const q =
-      `/calendar/economic?from=${encodeURIComponent(from)}` +
-      `&to=${encodeURIComponent(to)}`;
-    return this.finnhub(q, { keyName, signal });
+  // Optional: can be used later for fallback (not required for current fix)
+  forexRates: (keyName, base = 'USD', signal) => {
+    const url = buildUrl('/forex/rates', { base }, keyName);
+    return fetchJson(url, signal);
+  },
+
+  economicCalendar: (keyName, from, to, signal) => {
+    const url = buildUrl('/calendar/economic', { from, to }, keyName);
+    return fetchJson(url, signal);
   }
 };
