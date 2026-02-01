@@ -42,6 +42,9 @@ export function initTabsApp(mountEl) {
     const view = el('section', 'tab-view');
     view.dataset.tab = t.id;
 
+    // ✅ add kind-specific class so CSS can lock macro tabs but keep calendar scrollable
+    view.classList.add(t.kind === 'macro' ? 'tab-view--macro' : 'tab-view--calendar');
+
     if (t.kind === 'macro') {
       const grid = el('div', 'tile-grid-host');
       view.appendChild(grid);
@@ -70,9 +73,6 @@ export function initTabsApp(mountEl) {
   mountEl.innerHTML = '';
   mountEl.appendChild(app);
 
-  // Prevent "tab switch while fetching" from leaving a new tab blank:
-  // - only one refresh runs at a time
-  // - if the active tab changes mid-refresh, we queue a single follow-up refresh
   let refreshing = false;
   let queuedRefresh = null; // { force, reason }
 
@@ -161,8 +161,6 @@ export function initTabsApp(mountEl) {
       header.setRefreshing(false);
       refreshing = false;
 
-      // If the user switched tabs while we were fetching, run one follow-up refresh
-      // for the CURRENT active tab.
       if (queuedRefresh) {
         const next = queuedRefresh;
         queuedRefresh = null;
@@ -180,7 +178,6 @@ export function initTabsApp(mountEl) {
     updateHeaderForActiveTab();
     rerenderActive();
 
-    // Auto-refresh the tab on first open / when stale, so switching tabs isn't blank.
     const tab = macroConfig.tabs.find((t) => t.id === tabId);
     if (tab?.kind === 'macro') {
       const last = quoteService.getTabLastUpdatedMs(tabId);
