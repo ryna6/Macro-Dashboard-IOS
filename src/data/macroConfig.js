@@ -11,7 +11,7 @@ export const macroConfig = {
         { type: 'stock', symbol: 'IEUR' },
         { type: 'stock', symbol: 'EWJ' },
         { type: 'stock', symbol: 'EWH' },
-        { type: 'stock', symbol: 'XIC' }
+        { type: 'stock', symbol: 'XIC', fallback: 'XIC.TO' }
       ]
     },
     {
