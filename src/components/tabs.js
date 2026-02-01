@@ -1,7 +1,7 @@
 import { macroConfig } from '../data/macroConfig.js';
 import { TIMEFRAMES } from '../data/candleService.js';
-import { calendarService } from '../data/calendarService.js';
 import { quoteService } from '../data/quoteService.js';
+import { calendarService } from '../data/calendarService.js';
 import { createHeader } from './header.js';
 import { renderTileGrid } from './tileGrid.js';
 import { initCalendarView } from './calendarView.js';
@@ -20,6 +20,10 @@ export function initTabsApp(mountEl) {
     timeframe: TIMEFRAMES.ONE_DAY
   };
 
+  // Per-tab refreshing state so one slow refresh doesn't disable the refresh button
+  // on other tabs (this is what was making Metals feel “unclickable”).
+  const refreshingByTab = new Map();
+
   const app = el('div', 'app');
 
   const header = createHeader({
@@ -29,7 +33,7 @@ export function initTabsApp(mountEl) {
       rerenderActive();
     },
     onRefresh: async () => {
-      await refreshActiveTab({ force: true, reason: 'manual' });
+      await refreshTab(state.activeTabId, { force: true, reason: 'manual' });
     }
   });
 
@@ -126,24 +130,34 @@ export function initTabsApp(mountEl) {
     }
   }
 
-  async function refreshActiveTab({ force = false, reason = 'auto' } = {}) {
-    const tab = macroConfig.tabs.find((t) => t.id === state.activeTabId);
+  async function refreshTab(tabId, { force = false } = {}) {
+    const tab = macroConfig.tabs.find((t) => t.id === tabId);
     if (!tab) return;
 
-    header.setRefreshing(true);
+    if (refreshingByTab.get(tabId)) return;
+    refreshingByTab.set(tabId, true);
+    if (tabId === state.activeTabId) header.setRefreshing(true);
 
     try {
       if (tab.kind === 'macro') {
-        await quoteService.prefetchTab(tab.id, tab.symbols, { reason, force });
-        header.setLastUpdated(quoteService.getTabLastUpdatedMs(tab.id));
-        rerenderActive();
+        await quoteService.prefetchTab(tabId, { force });
       } else {
         ensureCalendarInit();
         await calendar?.refresh?.({ force: true });
-        header.setLastUpdated(calendarService.getLastFetchMs?.() || null);
+      }
+
+      if (tabId === state.activeTabId) {
+        if (tab.kind === 'macro') {
+          header.setLastUpdated(quoteService.getTabLastUpdatedMs(tabId));
+          rerenderActive();
+        } else {
+          header.setLastUpdated(calendarService.getLastFetchMs?.() || null);
+          calendar?.renderFromCache?.();
+        }
       }
     } finally {
-      header.setRefreshing(false);
+      refreshingByTab.set(tabId, false);
+      if (tabId === state.activeTabId) header.setRefreshing(false);
     }
   }
 
@@ -152,18 +166,19 @@ export function initTabsApp(mountEl) {
     updateTabbar();
     showActiveView();
     updateHeaderForActiveTab();
+
+    header.setRefreshing(!!refreshingByTab.get(tabId));
     rerenderActive();
   }
 
-  // initial view
   setActiveTab(state.activeTabId);
 
   return {
     startAutoRefresh() {
-      refreshActiveTab({ force: false, reason: 'startup' });
+      refreshTab(state.activeTabId, { force: false, reason: 'startup' });
 
       const id = setInterval(() => {
-        refreshActiveTab({ force: false, reason: 'timer' });
+        refreshTab(state.activeTabId, { force: false, reason: 'timer' });
       }, FIVE_MIN_MS);
 
       return () => clearInterval(id);
