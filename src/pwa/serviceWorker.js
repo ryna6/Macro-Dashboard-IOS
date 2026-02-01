@@ -1,8 +1,9 @@
-const CACHE_NAME = 'macro-dashboard-shell-v1';
+const CACHE_NAME = 'macro-dashboard-shell-v2'; // bump version
 
 const PRECACHE_URLS = [
   '/',
   '/index.html',
+  // '/manifest.json',  // <- remove this
   '/icons/Icon-192x192.png',
   '/icons/Icon-512x512.png'
 ];
@@ -37,6 +38,17 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // ✅ Always fetch manifest fresh (fallback to cache only if offline)
+  if (url.origin === self.location.origin && url.pathname === '/manifest.json') {
+    event.respondWith(
+      fetch(req).catch(async () => {
+        const cache = await caches.open(CACHE_NAME);
+        return (await cache.match(req)) || Response.error();
+      })
+    );
+    return;
+  }
+
   if (req.mode === 'navigate') {
     event.respondWith(
       (async () => {
@@ -63,7 +75,12 @@ self.addEventListener('fetch', (event) => {
 
         const fresh = await fetch(req);
         const ct = fresh.headers.get('content-type') || '';
-        if (ct.includes('text/css') || ct.includes('javascript') || ct.includes('image/') || ct.includes('font/')) {
+        if (
+          ct.includes('text/css') ||
+          ct.includes('javascript') ||
+          ct.includes('image/') ||
+          ct.includes('font/')
+        ) {
           cache.put(req, fresh.clone());
         }
         return fresh;
