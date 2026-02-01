@@ -6,7 +6,7 @@ const FINNHUB_BASE = 'https://finnhub.io/api/v1';
  * Replace these with your real keys.
  */
 const FINNHUB_KEYS = {
-  global: 'YOUR_FINNHUB_KEY_GLOBAL',
+  global: 'd4d73mhr01qovljoddigd4d73mhr01qovljoddj0',
   metals: 'YOUR_FINNHUB_KEY_METALS',
   commo: 'YOUR_FINNHUB_KEY_COMMO',
   rates: 'YOUR_FINNHUB_KEY_RATES',
