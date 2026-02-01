@@ -10,6 +10,22 @@ import { initTabsApp } from './components/tabs.js';
   document.addEventListener(evt, (e) => e.preventDefault(), { passive: false });
 });
 
+// block multi-touch zoom
+document.addEventListener(
+  'touchstart',
+  (e) => {
+    if (e.touches && e.touches.length > 1) e.preventDefault();
+  },
+  { passive: false }
+);
+document.addEventListener(
+  'touchmove',
+  (e) => {
+    if (e.touches && e.touches.length > 1) e.preventDefault();
+  },
+  { passive: false }
+);
+
 // Reduce double-tap zoom edge cases
 let lastTouchEnd = 0;
 document.addEventListener(
