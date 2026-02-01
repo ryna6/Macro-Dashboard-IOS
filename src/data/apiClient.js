@@ -10,8 +10,6 @@
 
 const FINNHUB_BASE = 'https://finnhub.io/api/v1';
 
-const DEFAULT_KEY = 'calendar';
-
 // Keep empty in repo. For quick testing you can paste keys here temporarily.
 const FINNHUB_KEYS = {
   global: 'd4d73mhr01qovljoddigd4d73mhr01qovljoddj0',
@@ -20,6 +18,8 @@ const FINNHUB_KEYS = {
   rates: 'd5s6jg1r01qoo9r2ukugd5s6jg1r01qoo9r2ukv0',
   calendar: 'd5s6jg1r01qoo9r2ukugd5s6jg1r01qoo9r2ukv0'
 };
+
+const DEFAULT_KEY = 'calendar';
 
 function envKeyName(keyName) {
   return `VITE_FINNHUB_KEY_${String(keyName || '').toUpperCase()}`;
