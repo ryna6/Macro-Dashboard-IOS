@@ -1,333 +1,195 @@
-// src/data/quoteService.js
-//
-// Overview tiles use QUOTES (not candles) so the app works on plans where intraday candles are restricted.
-// - Stocks/ETFs: /quote + /stock/profile2 (logo)
-// - Metals spot pairs (XAUUSD, XAGUSD, XPTUSD, XPDUSD): /forex/rates (base=USD) and invert to USD-per-metal
-//
-// 1W/1M % change:
-// - Finnhub quote does not provide 1W/1M. Without a free historical endpoint, we cannot compute it perfectly.
-// - This service will show 1W/1M as "—" unless you later add a historical provider.
-// - (It still keeps a small spark series from recent quote refreshes.)
+// src/components/tile.js
+import { candleService } from '../data/candleService.js';
+import { quoteService } from '../data/quoteService.js';
+import { openTileExpanded } from './tileExpanded.js';
 
-import { apiClient } from './apiClient.js';
-import { storage } from './storage.js';
-import { nyTime } from './time.js';
-import { TIMEFRAMES } from './candleService.js';
-
-const QUOTE_CACHE_PREFIX = 'macrodb:quotes:v1:'; // + tabId
-const LOGO_CACHE_KEY = 'macrodb:logos:v1';
-
-// Staleness
-const QUOTE_TTL_MS = 2 * 60 * 1000; // quote refresh interval tolerance
-const FX_TTL_MS = 2 * 60 * 1000;    // forex rates refresh tolerance
-const LOGO_TTL_MS = 90 * 24 * 60 * 60 * 1000; // logos basically never change
-
-// Small in-memory sparkline built from quote refreshes
-const SPARK_MAX_POINTS = 40;
-
-const memTabs = new Map(); // tabId -> Map(symbolKey -> record)
-const inflight = new Map(); // `${tabId}:${symbolKey}` -> Promise<boolean>
-
-// FX cache per tab (USD base)
-const fxMem = new Map(); // tabId -> { fetchedAtMs, ratesJson }
-
-function nowMs() {
-  return Date.now();
+function el(tag, className) {
+  const n = document.createElement(tag);
+  if (className) n.className = className;
+  return n;
 }
 
-function isFiniteNum(x) {
-  return typeof x === 'number' && Number.isFinite(x);
+function fmtPrice(x) {
+  if (x == null || !Number.isFinite(x)) return '—';
+  const abs = Math.abs(x);
+  const decimals = abs < 10 ? 4 : abs < 1000 ? 2 : 1;
+  return x.toFixed(decimals);
 }
 
-function symbolKey(spec) {
-  return `${spec.type}:${String(spec.symbol || '').toUpperCase()}`;
+function fmtPct(x) {
+  if (x == null || !Number.isFinite(x)) return '—';
+  const sign = x > 0 ? '+' : '';
+  return `${sign}${x.toFixed(2)}%`;
 }
 
-function loadTabDisk(tabId) {
-  return storage.getJSON(`${QUOTE_CACHE_PREFIX}${tabId}`) || { symbols: {}, lastUpdatedMs: 0 };
+function drawSpark(canvas, points) {
+  const ctx = canvas?.getContext?.('2d');
+  if (!ctx) return;
+
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  if (!points || points.length < 2) return;
+  const closes = points
+    .map((p) => (typeof p?.c === 'number' ? p.c : null))
+    .filter((v) => Number.isFinite(v));
+  if (closes.length < 2) return;
+
+  const min = Math.min(...closes);
+  const max = Math.max(...closes);
+  const range = max - min || 1;
+
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+
+  closes.forEach((v, i) => {
+    const x = (i / (closes.length - 1)) * (w - 2) + 1;
+    const y = h - ((v - min) / range) * (h - 2) - 1;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+  ctx.stroke();
 }
 
-function saveTabDisk(tabId, obj) {
-  storage.setJSON(`${QUOTE_CACHE_PREFIX}${tabId}`, obj);
+function logoFallbackText(spec) {
+  const sym = String(spec?.symbol || '').toUpperCase();
+  if (sym.startsWith('XAU')) return 'Au';
+  if (sym.startsWith('XAG')) return 'Ag';
+  if (sym.startsWith('XPT')) return 'Pt';
+  if (sym.startsWith('XPD')) return 'Pd';
+  return (sym || '?').slice(0, 1);
 }
 
-function getTabMem(tabId) {
-  if (!memTabs.has(tabId)) memTabs.set(tabId, new Map());
-  return memTabs.get(tabId);
-}
+export function createTile({ tabId, symbolSpec, timeframe }) {
+  const root = el('div', 'tile');
+  root.role = 'button';
+  root.tabIndex = 0;
 
-function mergeDiskIntoMem(tabId) {
-  const disk = loadTabDisk(tabId);
-  const m = getTabMem(tabId);
-  for (const [k, v] of Object.entries(disk.symbols || {})) {
-    if (!m.has(k)) m.set(k, v);
-  }
-}
+  const top = el('div', 'tile-top');
+  const logo = el('div', 'tile-logo');
 
-function pctChange(from, to) {
-  if (!isFiniteNum(from) || !isFiniteNum(to) || from === 0) return null;
-  return ((to - from) / from) * 100;
-}
+  // IMG + fallback text (MarketDB-style consumer of logoUrl)
+  const img = document.createElement('img');
+  img.alt = '';
+  img.decoding = 'async';
+  img.loading = 'lazy';
+  img.referrerPolicy = 'no-referrer';
 
-/* ------------------------- Logo cache (MarketDB style) ------------------------- */
+  // Make it work even if your CSS doesn’t yet define .tile-logo-img
+  img.style.width = '100%';
+  img.style.height = '100%';
+  img.style.objectFit = 'contain';
+  img.style.display = 'none';
 
-let logoCache = storage.getJSON(LOGO_CACHE_KEY) || {}; // SYMBOL -> { logoUrl, lastFetchMs }
+  const fallback = document.createElement('span');
+  fallback.textContent = logoFallbackText(symbolSpec);
+  fallback.style.display = 'block';
 
-function normalizeLogoUrl(logo) {
-  if (!logo) return null;
-  const s = String(logo).trim();
-  if (!s) return null;
-  return s.startsWith('http') ? s : `https://${s.replace(/^\/+/, '')}`;
-}
+  img.addEventListener('error', () => {
+    img.style.display = 'none';
+    fallback.style.display = 'block';
+  });
 
-function getCachedLogo(symbol) {
-  const sym = String(symbol || '').toUpperCase();
-  const entry = logoCache[sym];
-  if (!entry?.logoUrl) return null;
-  if (!entry.lastFetchMs) return entry.logoUrl;
-  if (nowMs() - entry.lastFetchMs > LOGO_TTL_MS) return null;
-  return entry.logoUrl;
-}
+  logo.appendChild(img);
+  logo.appendChild(fallback);
 
-async function ensureLogo(tabId, symbol) {
-  const sym = String(symbol || '').toUpperCase();
-  if (!sym) return null;
+  const sym = el('div', 'tile-symbol');
+  sym.textContent = symbolSpec.symbol;
 
-  const cached = getCachedLogo(sym);
-  if (cached) return cached;
+  top.appendChild(logo);
+  top.appendChild(sym);
 
-  try {
-    const prof = await apiClient.stockProfile2({ keyName: tabId, symbol: sym });
-    const url = normalizeLogoUrl(prof?.logo);
-    if (url) {
-      logoCache[sym] = { logoUrl: url, lastFetchMs: nowMs() };
-      storage.setJSON(LOGO_CACHE_KEY, logoCache);
-      return url;
-    }
-  } catch (_) {
-    // ignore profile errors
-  }
+  const mid = el('div', 'tile-mid');
+  const price = el('div', 'tile-price');
+  const change = el('div', 'tile-change');
+  mid.appendChild(price);
+  mid.appendChild(change);
 
-  return null;
-}
+  const spark = el('canvas', 'tile-spark');
+  spark.width = 220;
+  spark.height = 38;
 
-/* ---------------------------- Forex helpers (metals) --------------------------- */
+  root.appendChild(top);
+  root.appendChild(mid);
+  root.appendChild(spark);
 
-function parseFxPair(pair) {
-  const s = String(pair || '').toUpperCase();
-  if (s.length < 6) return null;
-  return { base: s.slice(0, 3), quote: s.slice(3, 6) };
-}
+  let refreshing = false;
 
-function priceFromUsdBaseRates(pair, ratesJson) {
-  // /forex/rates?base=USD returns quote map:
-  // quote[XAU] = XAU per 1 USD
-  // For XAUUSD (USD per XAU), invert: 1 / quote[XAU]
-  const p = parseFxPair(pair);
-  if (!p) return null;
-  if (p.quote !== 'USD') return null;
+  function paint() {
+    const snap = quoteService.getSnapshot(tabId, symbolSpec, timeframe);
 
-  const r = ratesJson?.quote?.[p.base];
-  if (!isFiniteNum(r) || r === 0) return null;
-  return 1 / r;
-}
-
-async function ensureFxRatesUsd(tabId) {
-  const cached = fxMem.get(tabId);
-  if (cached && (nowMs() - cached.fetchedAtMs) < FX_TTL_MS) return cached.ratesJson;
-
-  // Optional: keep weekday-only consistency for metals/FX
-  const nowSec = Math.floor(nowMs() / 1000);
-  if (nyTime.isWeekend(nowSec) && cached?.ratesJson) {
-    return cached.ratesJson; // hold last weekday cache on weekends
-  }
-
-  const json = await apiClient.forexRates({ keyName: tabId, base: 'USD' });
-  fxMem.set(tabId, { fetchedAtMs: nowMs(), ratesJson: json });
-  return json;
-}
-
-/* --------------------------------- Public API -------------------------------- */
-
-export const quoteService = {
-  TIMEFRAMES,
-
-  getTabLastUpdatedMs(tabId) {
-    return loadTabDisk(tabId)?.lastUpdatedMs || 0;
-  },
-
-  getSnapshot(tabId, spec, timeframe) {
-    mergeDiskIntoMem(tabId);
-
-    const key = symbolKey(spec);
-    const rec = getTabMem(tabId).get(key);
-
-    const last = isFiniteNum(rec?.last) ? rec.last : null;
-    const q = rec?.quote || null;
-
-    let changePct = null;
-
-    // 1D: use Finnhub quote dp/pc when available
-    if (last != null) {
-      if (timeframe === TIMEFRAMES.ONE_DAY) {
-        if (isFiniteNum(q?.dp)) changePct = q.dp;
-        else if (isFiniteNum(q?.pc) && q.pc !== 0) changePct = pctChange(q.pc, last);
-      } else {
-        // No reliable 1W/1M from quote-only (needs historical series provider)
-        changePct = null;
+    // logo
+    if (snap.logoUrl) {
+      if (img.dataset.src !== snap.logoUrl) {
+        img.dataset.src = snap.logoUrl;
+        img.src = snap.logoUrl;
       }
+      img.style.display = 'block';
+      fallback.style.display = 'none';
+    } else {
+      img.style.display = 'none';
+      fallback.style.display = 'block';
     }
 
-    // Sparkline: from recent quote refreshes (session-ish)
-    const spark = Array.isArray(rec?.spark) ? rec.spark : [];
+    price.textContent = fmtPrice(snap.last);
 
-    return {
-      last,
-      changePct,
-      spark,
-      logoUrl: rec?.logoUrl || null
-    };
-  },
+    const pct = snap.changePct;
+    change.textContent = fmtPct(pct);
 
-  // Fetch quote + (for stocks) logo. Returns true if record updated.
-  async ensureFreshSymbol(tabId, spec, { force = false } = {}) {
-    const key = symbolKey(spec);
-    const inflightKey = `${tabId}:${key}`;
-    if (inflight.has(inflightKey)) return inflight.get(inflightKey);
+    change.classList.toggle('is-up', pct != null && pct > 0);
+    change.classList.toggle('is-down', pct != null && pct < 0);
 
-    const p = (async () => {
-      mergeDiskIntoMem(tabId);
+    drawSpark(spark, (snap.spark || []).slice(-120));
+  }
 
-      const m = getTabMem(tabId);
-      const disk = loadTabDisk(tabId);
+  function refreshIfNeeded() {
+    if (refreshing) return;
+    refreshing = true;
+    quoteService
+      .ensureFreshSymbol(tabId, symbolSpec, { force: false })
+      .then((changed) => {
+        if (changed) paint();
+      })
+      .finally(() => {
+        refreshing = false;
+      });
+  }
 
-      const existing =
-        m.get(key) ||
-        disk.symbols?.[key] ||
-        {
-          type: spec.type,
-          symbol: String(spec.symbol || '').toUpperCase(),
-          last: null,
-          quote: null,
-          updatedMs: 0,
-          logoUrl: null,
-          spark: []
-        };
+  function update() {
+    paint();
+    refreshIfNeeded();
+  }
 
-      const age = nowMs() - (existing.updatedMs || 0);
-      if (!force && existing.updatedMs && age < QUOTE_TTL_MS) {
-        // Still ensure logo lazily if missing (but don't spam)
-        if (existing.type === 'stock' && !existing.logoUrl) {
-          const cachedLogo = getCachedLogo(existing.symbol);
-          if (cachedLogo) {
-            existing.logoUrl = cachedLogo;
-            writeSymbol(tabId, key, existing);
-            return true;
-          }
-        }
-        return false;
-      }
-
-      let updated = false;
-
-      if (spec.type === 'forex') {
-        // Metals: XAUUSD etc via forex rates (USD base)
-        try {
-          const rates = await ensureFxRatesUsd(tabId);
-          const price = priceFromUsdBaseRates(spec.symbol, rates);
-
-          if (isFiniteNum(price)) {
-            existing.last = price;
-            existing.quote = { c: price, t: Math.floor(nowMs() / 1000) };
-            existing.updatedMs = nowMs();
-
-            existing.spark ||= [];
-            existing.spark.push({ t: existing.updatedMs, c: price });
-            if (existing.spark.length > SPARK_MAX_POINTS) existing.spark = existing.spark.slice(-SPARK_MAX_POINTS);
-
-            updated = true;
-          }
-        } catch (_) {
-          // ignore
-        }
-      } else {
-        // Stocks/ETFs via /quote (+ optional fallback symbol)
-        const candidates = [spec.symbol];
-        if (spec.fallback) candidates.push(spec.fallback);
-
-        let usedSymbol = null;
-        let q = null;
-
-        for (const sym of candidates) {
-          try {
-            const res = await apiClient.quote({ keyName: tabId, symbol: sym });
-            // Finnhub sometimes returns 0 for invalid symbol; treat as invalid
-            if (res && isFiniteNum(res.c) && res.c !== 0) {
-              usedSymbol = String(sym).toUpperCase();
-              q = res;
-              break;
-            }
-          } catch (_) {
-            // continue
-          }
-        }
-
-        if (q && usedSymbol) {
-          existing.symbol = String(spec.symbol || '').toUpperCase();
-          existing.resolvedSymbol = usedSymbol;
-          existing.quote = q;
-          existing.last = q.c;
-          existing.updatedMs = nowMs();
-
-          existing.spark ||= [];
-          existing.spark.push({ t: existing.updatedMs, c: q.c });
-          if (existing.spark.length > SPARK_MAX_POINTS) existing.spark = existing.spark.slice(-SPARK_MAX_POINTS);
-
-          // Logo fetch (MarketDB pattern: profile2, cached long-term)
-          if (!existing.logoUrl) {
-            const cachedLogo = getCachedLogo(usedSymbol);
-            if (cachedLogo) {
-              existing.logoUrl = cachedLogo;
-            } else {
-              const logo = await ensureLogo(tabId, usedSymbol);
-              if (logo) existing.logoUrl = logo;
-            }
-          }
-
-          updated = true;
-        }
-      }
-
-      if (updated) {
-        writeSymbol(tabId, key, existing);
-      }
-      return updated;
-    })().finally(() => {
-      inflight.delete(inflightKey);
+  function expand() {
+    // Expanded view still uses candleService for now.
+    // If candle endpoint is restricted, the expanded chart may remain empty until you swap providers.
+    const candles = candleService.getCandles(tabId, symbolSpec, timeframe);
+    openTileExpanded({
+      symbol: symbolSpec.symbol,
+      displayName: symbolSpec.symbol,
+      timeframeLabel: timeframe,
+      candles
     });
-
-    inflight.set(inflightKey, p);
-    return p;
   }
-};
 
-function writeSymbol(tabId, key, rec) {
-  // mem
-  getTabMem(tabId).set(key, rec);
+  root.addEventListener('click', () => {
+    update();
+    expand();
+  });
 
-  // disk
-  const disk = loadTabDisk(tabId);
-  disk.symbols ||= {};
-  disk.symbols[key] = {
-    type: rec.type,
-    symbol: rec.symbol,
-    resolvedSymbol: rec.resolvedSymbol || null,
-    last: rec.last,
-    quote: rec.quote || null,
-    logoUrl: rec.logoUrl || null,
-    updatedMs: rec.updatedMs || 0,
-    spark: Array.isArray(rec.spark) ? rec.spark.slice(-SPARK_MAX_POINTS) : []
-  };
-  disk.lastUpdatedMs = Math.max(disk.lastUpdatedMs || 0, rec.updatedMs || 0);
-  saveTabDisk(tabId, disk);
+  root.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      update();
+      expand();
+    }
+  });
+
+  // Initial paint + lazy fetch
+  update();
+
+  return { el: root, update };
 }
