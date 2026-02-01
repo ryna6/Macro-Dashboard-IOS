@@ -20,10 +20,10 @@ export const macroConfig = {
       shortName: 'Metals',
       longName: 'Precious Metals',
       symbols: [
-        { type: 'forex', symbol: 'XAUUSD', name: 'Gold' },
-        { type: 'forex', symbol: 'XAGUSD', name: 'Silver' },
-        { type: 'forex', symbol: 'XPTUSD', name: 'Platinum' },
-        { type: 'forex', symbol: 'XPDUSD', name: 'Palladium' }
+        { type: 'forex', symbol: 'XAUUSD', name: 'Gold ETF' },
+        { type: 'forex', symbol: 'XAGUSD', name: 'Silver ETF' },
+        { type: 'forex', symbol: 'XPTUSD', name: 'Platinum ETF' },
+        { type: 'forex', symbol: 'XPDUSD', name: 'Palladium ETF' }
       ]
     },
     {
