@@ -1,4 +1,3 @@
-// src/components/tile.js
 import { candleService } from '../data/candleService.js';
 import { openTileExpanded } from './tileExpanded.js';
 
@@ -22,8 +21,7 @@ function fmtPct(x) {
 }
 
 function drawSpark(canvas, candles) {
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas?.getContext?.('2d');
   if (!ctx) return;
 
   const w = canvas.width;
@@ -31,7 +29,6 @@ function drawSpark(canvas, candles) {
   ctx.clearRect(0, 0, w, h);
 
   if (!candles || candles.length < 2) return;
-
   const closes = candles.map((c) => c.c).filter((v) => Number.isFinite(v));
   if (closes.length < 2) return;
 
@@ -39,7 +36,6 @@ function drawSpark(canvas, candles) {
   const max = Math.max(...closes);
   const range = max - min || 1;
 
-  ctx.globalAlpha = 0.9;
   ctx.lineWidth = 1.5;
   ctx.beginPath();
 
@@ -50,7 +46,6 @@ function drawSpark(canvas, candles) {
     else ctx.lineTo(x, y);
   });
 
-  // no explicit colors per your “don’t over-style” preference; use CSS tint via currentColor
   ctx.strokeStyle = 'rgba(255,255,255,0.65)';
   ctx.stroke();
 }
@@ -61,7 +56,6 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   root.tabIndex = 0;
 
   const top = el('div', 'tile-top');
-
   const logo = el('div', 'tile-logo');
   logo.textContent = (symbolSpec.symbol || '?').slice(0, 1);
 
@@ -74,7 +68,6 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   const mid = el('div', 'tile-mid');
   const price = el('div', 'tile-price');
   const change = el('div', 'tile-change');
-
   mid.appendChild(price);
   mid.appendChild(change);
 
@@ -110,7 +103,7 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   }
 
   root.addEventListener('click', () => {
-    update(); // ensure latest render before expanding
+    update();
     expand();
   });
 
@@ -123,6 +116,5 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   });
 
   update();
-
   return { el: root, update };
 }
