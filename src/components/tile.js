@@ -1,4 +1,3 @@
-import { candleService } from '../data/candleService.js';
 import { quoteService } from '../data/quoteService.js';
 import { openTileExpanded } from './tileExpanded.js';
 
@@ -30,7 +29,7 @@ function drawSpark(canvas, points) {
   ctx.clearRect(0, 0, w, h);
 
   if (!points || points.length < 2) return;
-  const values = points.map((p) => p?.p).filter((v) => Number.isFinite(v));
+  const values = points.map((p) => p.p).filter((v) => Number.isFinite(v));
   if (values.length < 2) return;
 
   const min = Math.min(...values);
@@ -58,7 +57,17 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
 
   const top = el('div', 'tile-top');
   const logo = el('div', 'tile-logo');
-  logo.textContent = (symbolSpec.symbol || '?').slice(0, 1);
+
+  const logoImg = document.createElement('img');
+  logoImg.className = 'tile-logo-img';
+  logoImg.alt = '';
+  logoImg.loading = 'lazy';
+
+  const logoText = el('div', 'tile-logo-text');
+  logoText.textContent = (symbolSpec.symbol || '?').slice(0, 1);
+
+  logo.appendChild(logoImg);
+  logo.appendChild(logoText);
 
   const sym = el('div', 'tile-symbol');
   sym.textContent = symbolSpec.symbol;
@@ -72,12 +81,17 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   mid.appendChild(price);
   mid.appendChild(change);
 
+  // Bottom-right intraday badge (always 1D change)
+  const badge = el('div', 'tile-badge');
+  badge.textContent = '—';
+
   const spark = el('canvas', 'tile-spark');
   spark.width = 220;
-  spark.height = 38;
+  spark.height = 64;
 
   root.appendChild(top);
   root.appendChild(mid);
+  root.appendChild(badge);
   root.appendChild(spark);
 
   function update() {
@@ -87,15 +101,28 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
     const pct = snap.changePct;
     change.textContent = fmtPct(pct);
 
-    change.classList.toggle('is-up', pct != null && pct > 0);
-    change.classList.toggle('is-down', pct != null && pct < 0);
+    // Whole-tile tint based on selected timeframe % change.
+    applyTileTint(root, pct);
 
-    drawSpark(spark, (snap.spark || []).slice(-120));
+    // Intraday badge always uses intraday %
+    badge.textContent = fmtPct(snap.intradayPct);
+
+    // Logo
+    if (snap.logoUrl) {
+      logoImg.src = snap.logoUrl;
+      logoImg.style.display = 'block';
+      logoText.style.display = 'none';
+    } else {
+      logoImg.style.display = 'none';
+      logoText.style.display = 'grid';
+    }
+
+    drawSpark(spark, (snap.spark || []).slice(-30));
   }
 
   function expand() {
-    // Expanded view still attempts candles (you’ll swap provider next)
-    const candles = candleService.getCandles(tabId, symbolSpec, timeframe);
+    // Candles may be plan-limited. Expanded view still opens as a popup.
+    const candles = [];
     openTileExpanded({
       symbol: symbolSpec.symbol,
       displayName: symbolSpec.symbol,
@@ -119,4 +146,32 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
 
   update();
   return { el: root, update };
+}
+
+// ---- tinting --------------------------------------------------------------
+
+function clamp01(x) {
+  if (!Number.isFinite(x)) return 0;
+  return Math.max(0, Math.min(1, x));
+}
+
+function applyTileTint(root, pct) {
+  if (!root) return;
+  if (pct == null || !Number.isFinite(pct)) {
+    root.style.setProperty('--tileTintA', '0.06');
+    root.style.setProperty('--tileTintR', '255');
+    root.style.setProperty('--tileTintG', '255');
+    root.style.setProperty('--tileTintB', '255');
+    return;
+  }
+
+  const sign = pct >= 0 ? 1 : -1;
+  const t = clamp01(Math.abs(pct) / 3.0); // 3% -> max tint
+  const a = 0.06 + t * 0.18;              // subtle -> stronger
+
+  const rgb = sign >= 0 ? [32, 197, 94] : [239, 68, 68]; // green / red
+  root.style.setProperty('--tileTintA', String(a));
+  root.style.setProperty('--tileTintR', String(rgb[0]));
+  root.style.setProperty('--tileTintG', String(rgb[1]));
+  root.style.setProperty('--tileTintB', String(rgb[2]));
 }
