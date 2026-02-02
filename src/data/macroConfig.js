@@ -41,7 +41,7 @@ export const macroConfig = {
     {
       id: 'rates',
       kind: 'macro',
-      shortName: 'Rates',
+      shortName: 'Bonds',
       longName: 'US & Corporate Bonds',
       symbols: [
         { type: 'stock', symbol: 'SHY', name: '1-3Y Treasury Bond' },
