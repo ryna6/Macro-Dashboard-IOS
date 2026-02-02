@@ -1,7 +1,7 @@
 .tile-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 5px;
+  gap: 10px;
   height: 100%;
   min-height: 0;
   grid-auto-rows: minmax(0, 1fr);
