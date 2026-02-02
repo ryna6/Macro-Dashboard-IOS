@@ -2,12 +2,8 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
-
-  /* ✅ fill the available view height so rows can size perfectly */
-  height: 100%;
+  height: 80%;
   min-height: 0;
-
-  /* ✅ auto rows share space evenly (2 rows or 3 rows depending on tile count) */
   grid-auto-rows: minmax(0, 1fr);
   align-content: stretch;
 }
@@ -15,13 +11,8 @@
 .tile {
   background: rgba(255, 255, 255, 0.06);
   border-radius: 16px;
-
-  /* slightly tighter to reduce risk of overflow */
   padding: 10px;
-
-  /* ✅ remove hard min-height that can cause overflow on smaller viewports */
   min-height: 0;
-
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -93,7 +84,7 @@
 
 .tile-spark {
   width: 100%;
-  height: 34px; /* slightly smaller to reduce overflow risk */
+  height: 34px;
   margin-top: 6px;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.03);
