@@ -4,8 +4,8 @@
   gap: 10px;
   height: 100%;
   min-height: 0;
-  grid-auto-rows: minmax(0, 1fr);
-  align-content: stretch;
+  grid-auto-rows: minmax(0, var(--tile-h, 1fr));
+  align-content: start;
 }
 
 .tile {
