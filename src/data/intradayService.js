@@ -3,7 +3,7 @@ import { storage } from './storage.js';
 import { twelveDataClient } from './twelveDataClient.js';
 import { nyTime } from './time.js';
 
-const CACHE_PREFIX = 'macrodb:intraday:v2:'; // bump version to avoid stale cache collisions
+const CACHE_PREFIX = 'macrodb:intraday:v2:'; // keep v2
 
 // ✅ HARD COOLDOWNS (also used as cache TTL)
 const COOLDOWN_MS = {
@@ -102,9 +102,13 @@ function normalizeTimeSeriesToCandles(data) {
 
 function postFilter(range, candles) {
   const session = (candles || []).filter((c) => !nyTime.isWeekend(c.t) && isWithinSession(c.t));
-  if (range === '1D') return pickRecentTradingDays(session, 1);   // ✅ latest session only
-  if (range === '1W') return pickRecentTradingDays(session, 5);   // ✅ 5 trading days
-  return pickRecentTradingDays(session, 21);                      // ✅ ~21 trading days
+  if (range === '1D') return pickRecentTradingDays(session, 1);
+  if (range === '1W') return pickRecentTradingDays(session, 5);
+  return pickRecentTradingDays(session, 21);
+}
+
+function hasUsableCandles(obj) {
+  return Array.isArray(obj?.candles) && obj.candles.length >= 2;
 }
 
 function shouldTryFallback(err) {
@@ -116,13 +120,17 @@ function shouldTryFallback(err) {
     msg.includes('invalid') ||
     msg.includes('format') ||
     msg.includes('date') ||
-    msg.includes('parameter')
+    msg.includes('parameter') ||
+    // ✅ common TwelveData phrasing for date=today issues
+    msg.includes('no data') ||
+    msg.includes('specified dates') ||
+    msg.includes('specified date')
   );
 }
 
 async function fetchTimeSeriesWithFallbacks({ tabId, symbol, range, signal }) {
-  // ✅ Requested defaults/fallbacks:
-  // 1D: 5min -> 15min
+  // Defaults + fallbacks:
+  // 1D: 5min(today) -> 15min(today) -> 5min(no date) -> 15min(no date)
   // 1W: 15min -> 30min
   // 1M: 2h -> 4h
 
@@ -131,6 +139,10 @@ async function fetchTimeSeriesWithFallbacks({ tabId, symbol, range, signal }) {
   if (range === '1D') {
     attempts.push({ interval: '5min', date: 'today', outputsize: 500 });
     attempts.push({ interval: '15min', date: 'today', outputsize: 260 });
+
+    // ✅ critical: if date=today errors (premarket/weekend/holiday), pull recent bars without date
+    attempts.push({ interval: '5min', outputsize: 900 });
+    attempts.push({ interval: '15min', outputsize: 900 });
   } else if (range === '1W') {
     attempts.push({ interval: '15min', outputsize: 1400 });
     attempts.push({ interval: '30min', outputsize: 1400 });
@@ -157,6 +169,7 @@ async function fetchTimeSeriesWithFallbacks({ tabId, symbol, range, signal }) {
       if (!shouldTryFallback(err)) throw err;
     }
   }
+
   throw lastErr || new Error('Failed to fetch time series');
 }
 
@@ -172,16 +185,33 @@ export const intradayService = {
     const cooldown = COOLDOWN_MS[String(range)] ?? (10 * 60 * 1000);
     const age = cached?.fetchedAtMs ? Date.now() - cached.fetchedAtMs : Infinity;
 
-    // ✅ HARD cooldown: ignore "force" if we have cached data within cooldown
-    if (cached?.candles && age < cooldown) return cached;
+    // ✅ Only return cache during cooldown if cache actually has usable candles
+    if (hasUsableCandles(cached) && age < cooldown) return cached;
+    if (!force && hasUsableCandles(cached) && age < cooldown) return cached;
 
-    // Normal “not forced” behavior also respects cooldown
-    if (!force && cached?.candles && age < cooldown) return cached;
+    let td;
+    try {
+      ({ td } = await fetchTimeSeriesWithFallbacks({ tabId, symbol, range, signal }));
+    } catch (err) {
+      // ✅ If 1D fails at the API level, fall back to pulling a 1W window and taking the latest session
+      if (range === '1D') {
+        try {
+          const fb = await fetchTimeSeriesWithFallbacks({ tabId, symbol, range: '1W', signal });
+          const filtered = postFilter('1W', normalizeTimeSeriesToCandles(fb.td));
+          const candles = pickRecentTradingDays(filtered, 1);
+          const obj = { candles, fetchedAtMs: Date.now() };
+          storage.setJSON(k, obj);
+          return obj;
+        } catch (_) {
+          // fall through
+        }
+      }
+      throw err;
+    }
 
-    const { td } = await fetchTimeSeriesWithFallbacks({ tabId, symbol, range, signal });
     let candles = postFilter(range, normalizeTimeSeriesToCandles(td));
 
-    // If 1D is empty (weekend/before session), fall back to latest day from a 1W fetch
+    // If 1D is empty after filtering (premarket only / before session), fall back to latest day from a 1W fetch
     if (range === '1D' && (!candles || candles.length < 2)) {
       const fb = await fetchTimeSeriesWithFallbacks({ tabId, symbol, range: '1W', signal });
       const filtered = postFilter('1W', normalizeTimeSeriesToCandles(fb.td));
