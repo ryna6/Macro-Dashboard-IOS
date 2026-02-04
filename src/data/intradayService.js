@@ -107,32 +107,40 @@ function normalizeTimeSeriesToCandles(data) {
 
 function postFilter(range, candles) {
   const weekdaySession = (candles || []).filter((c) => !nyTime.isWeekend(c.t) && isWithinSession(c.t));
-  if (range === '1D') return weekdaySession;
+  if (range === '1D') return pickRecentTradingDays(weekdaySession, 1); // ✅ always keep only latest day
   if (range === '1W') return pickRecentTradingDays(weekdaySession, 5);
   return pickRecentTradingDays(weekdaySession, 21);
 }
 
-function isLikelyIntervalBlocked(err) {
+function shouldTryFallback(err) {
   const msg = String(err?.message || '').toLowerCase();
-  return msg.includes('interval') || msg.includes('not supported') || msg.includes('not available');
+  // allow fallbacks on common plan/param errors
+  return (
+    msg.includes('interval') ||
+    msg.includes('not supported') ||
+    msg.includes('not available') ||
+    msg.includes('date') ||
+    msg.includes('format') ||
+    msg.includes('invalid')
+  );
 }
 
 async function fetchTimeSeriesWithFallbacks({ tabId, symbol, range, signal }) {
-  // Primary params per range:
-  // - 1D: 5min (fallback -> 15min if blocked)
-  // - 1W: 15min
-  // - 1M: 2h (fallback -> 4h if blocked)
+  // ✅ 1D: 5min (date=today) -> 15min (date=today) -> 5min (no date)
+  // ✅ 1W: 15min
+  // ✅ 1M: 2h -> 4h
 
   const attempts = [];
 
   if (range === '1D') {
-    attempts.push({ interval: '5min', date: 'today', outputsize: 350 });
-    attempts.push({ interval: '15min', date: 'today', outputsize: 200 });
+    attempts.push({ interval: '5min', date: 'today', outputsize: 400 });
+    attempts.push({ interval: '15min', date: 'today', outputsize: 260 });
+    attempts.push({ interval: '5min', outputsize: 600 }); // no date fallback
   } else if (range === '1W') {
     attempts.push({ interval: '15min', outputsize: 1200 });
   } else {
-    attempts.push({ interval: '2h', outputsize: 1500 });
-    attempts.push({ interval: '4h', outputsize: 1500 });
+    attempts.push({ interval: '2h', outputsize: 1600 });
+    attempts.push({ interval: '4h', outputsize: 1600 });
   }
 
   let lastErr = null;
@@ -150,14 +158,10 @@ async function fetchTimeSeriesWithFallbacks({ tabId, symbol, range, signal }) {
       return { td, usedInterval: a.interval };
     } catch (err) {
       lastErr = err;
-      if (range === '1D' || range === '1M') {
-        // Only continue fallbacks if it looks like an interval/plan restriction.
-        if (!isLikelyIntervalBlocked(err)) throw err;
-      } else {
-        throw err;
-      }
+      if (!shouldTryFallback(err)) throw err;
     }
   }
+
   throw lastErr || new Error('Failed to fetch time series');
 }
 
@@ -177,7 +181,7 @@ export const intradayService = {
     const { td } = await fetchTimeSeriesWithFallbacks({ tabId, symbol, range, signal });
     let candles = postFilter(range, normalizeTimeSeriesToCandles(td));
 
-    // If "today" is empty (common outside session), fallback to trailing window and pick latest session.
+    // If "today" is empty (weekend / before market), fallback to latest session from 1W fetch.
     if (range === '1D' && (!candles || candles.length < 2)) {
       const { td: fallbackTd } = await fetchTimeSeriesWithFallbacks({
         tabId,
@@ -185,7 +189,6 @@ export const intradayService = {
         range: '1W',
         signal
       });
-
       const fb = postFilter('1W', normalizeTimeSeriesToCandles(fallbackTd));
       candles = pickRecentTradingDays(fb, 1);
     }
