@@ -1,3 +1,9 @@
+// src/data/twelveDataClient.js
+// Minimal Twelve Data REST wrapper (used as a fallback provider when Finnhub candles are restricted).
+//
+// Notes on credits/rate-limits:
+// - Twelve Data counts credits per *symbol* even when batching multiple symbols in one request.
+
 const TWELVEDATA_BASE = 'https://api.twelvedata.com';
 
 const TWELVEDATA_KEYS = {
@@ -8,22 +14,46 @@ const TWELVEDATA_KEYS = {
 };
 
 function tokenFor(tabId) {
-  const token = (TWELVEDATA_KEYS[String(tabId)] || '').trim();
-  if (!token) throw new Error(`Missing Twelve Data API key for tab "${tabId}".`);
+  const key = String(tabId || '').trim();
+  const token = (TWELVEDATA_KEYS[key] || '').trim();
+  if (!token) throw new Error(`Missing Twelve Data API key for tab "${key}".`);
   return token;
+}
+
+function buildUrl(path, params = {}, tabId) {
+  const token = tokenFor(tabId);
+  const url = new URL(`${TWELVEDATA_BASE}${path}`);
+  url.searchParams.set('apikey', token);
+
+  Object.entries(params).forEach(([k, v]) => {
+    if (v === undefined || v === null || v === '') return;
+    url.searchParams.set(k, String(v));
+  });
+
+  return url.toString();
 }
 
 async function fetchJson(url, { signal } = {}) {
   const res = await fetch(url, { signal, cache: 'no-store' });
-  const data = await res.json().catch(() => ({}));
+  const text = await res.text().catch(() => '');
+  let data = null;
+
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
 
   const status = String(data?.status || '').toLowerCase();
   if (!res.ok || status === 'error') {
-    const err = new Error(data?.message || `TwelveData HTTP ${res.status}`);
+    const msg = data?.message || data?.error || `Twelve Data HTTP ${res.status} ${res.statusText}`;
+    const err = new Error(msg);
     err.status = res.status;
+    err.url = url;
     err.data = data;
     throw err;
   }
+
   return data;
 }
 
@@ -31,26 +61,29 @@ export const twelveDataClient = {
   async timeSeries({
     keyName,
     symbol,
-    interval,
-    outputsize,
+    interval = '1day',
+    outputsize = 30,
     date,
     start_date,
     end_date,
     timezone,
     signal
   }) {
-    const url = new URL(`${TWELVEDATA_BASE}/time_series`);
-    url.searchParams.set('apikey', tokenFor(keyName));
-    url.searchParams.set('symbol', symbol);
-    url.searchParams.set('interval', interval);
+    const url = buildUrl(
+      '/time_series',
+      {
+        symbol,
+        interval,
+        outputsize,
+        date,
+        start_date,
+        end_date,
+        timezone,
+        format: 'JSON'
+      },
+      keyName
+    );
 
-    if (outputsize) url.searchParams.set('outputsize', String(outputsize));
-    if (date) url.searchParams.set('date', String(date));
-    if (start_date) url.searchParams.set('start_date', String(start_date));
-    if (end_date) url.searchParams.set('end_date', String(end_date));
-    if (timezone) url.searchParams.set('timezone', String(timezone));
-    url.searchParams.set('format', 'JSON');
-
-    return fetchJson(url.toString(), { signal });
+    return fetchJson(url, { signal });
   }
 };
