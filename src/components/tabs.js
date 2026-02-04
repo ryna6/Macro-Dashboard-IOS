@@ -2,6 +2,7 @@ import { macroConfig } from '../data/macroConfig.js';
 import { TIMEFRAMES } from '../data/candleService.js';
 import { calendarService } from '../data/calendarService.js';
 import { quoteService } from '../data/quoteService.js';
+import { intradayService } from '../data/intradayService.js';
 import { createHeader } from './header.js';
 import { renderTileGrid } from './tileGrid.js';
 import { initCalendarView } from './calendarView.js';
@@ -16,21 +17,20 @@ function el(tag, className) {
 
 export function initTabsApp(mountEl) {
   const state = {
-    activeTabId: macroConfig.tabs[0].id, // default = first tab
+    activeTabId: macroConfig.tabs[0].id,
     timeframe: TIMEFRAMES.ONE_DAY
   };
 
   const app = el('div', 'app');
 
   let refreshing = false;
-  let queuedRefresh = null; // { force, reason }
+  let queuedRefresh = null;
 
   const header = createHeader({
     onTimeframeChange: (tf) => {
       state.timeframe = tf;
       header.setActiveTf(tf);
 
-      // Render immediately from cache. If 1W/1M needs baselines, fetch them in the background.
       rerenderActive();
 
       const tab = macroConfig.tabs.find((t) => t.id === state.activeTabId);
@@ -38,7 +38,6 @@ export function initTabsApp(mountEl) {
         quoteService
           .ensureRangeBaselines(tab.id, tab.symbols, { force: false })
           .then((ok) => {
-            // If candles are blocked, we disable 1W/1M and fall back to 1D.
             const enabled = quoteService.isTimeframeEnabled(tab.id, TIMEFRAMES.ONE_WEEK);
             header.setTimeframeOptionEnabled(TIMEFRAMES.ONE_WEEK, enabled);
             header.setTimeframeOptionEnabled(TIMEFRAMES.ONE_MONTH, enabled);
@@ -50,9 +49,7 @@ export function initTabsApp(mountEl) {
 
             rerenderActive();
           })
-          .catch(() => {
-            // ignore
-          });
+          .catch(() => {});
       }
     },
     onRefresh: async () => {
@@ -62,14 +59,11 @@ export function initTabsApp(mountEl) {
 
   const main = el('main', 'app-main');
   const tabbar = el('nav', 'tabbar');
-
-  const views = new Map(); // tabId -> { viewEl, kind }
+  const views = new Map();
 
   macroConfig.tabs.forEach((t) => {
     const view = el('section', 'tab-view');
     view.dataset.tab = t.id;
-
-    // ✅ add kind-specific class so CSS can lock macro tabs but keep calendar scrollable
     view.classList.add(t.kind === 'macro' ? 'tab-view--macro' : 'tab-view--calendar');
 
     if (t.kind === 'macro') {
@@ -105,13 +99,9 @@ export function initTabsApp(mountEl) {
   function ensureCalendarInit() {
     const entry = views.get('calendar');
     if (!entry) return;
-
     const container = entry.viewEl.querySelector('.calendar-container');
     if (!container) return;
-
-    if (!calendar) {
-      calendar = initCalendarView(container);
-    }
+    if (!calendar) calendar = initCalendarView(container);
   }
 
   function updateTabbar() {
@@ -133,7 +123,6 @@ export function initTabsApp(mountEl) {
     header.setTimeframeOptionEnabled(TIMEFRAMES.ONE_WEEK, canWeek);
     header.setTimeframeOptionEnabled(TIMEFRAMES.ONE_MONTH, canMonth);
 
-    // If current selection isn't available, fall back to 1D.
     if (state.timeframe === TIMEFRAMES.ONE_WEEK && !canWeek) {
       state.timeframe = TIMEFRAMES.ONE_DAY;
       header.setActiveTf(state.timeframe);
@@ -154,9 +143,8 @@ export function initTabsApp(mountEl) {
     } else {
       header.setTimeframeVisible(true);
       header.setActiveTf(state.timeframe);
-
       applyTimeframeAvailability(tab.id);
-      header.setLastUpdated(quoteService.getTabLastUpdatedMs(state.activeTabId));
+      header.setLastUpdated(quoteService.getTabLastUpdatedMs(tab.id));
     }
   }
 
@@ -192,7 +180,17 @@ export function initTabsApp(mountEl) {
 
     try {
       if (tab.kind === 'macro') {
+        // 1) Quotes (price + %)
         await quoteService.prefetchTab(tab.id, tab.symbols, { force });
+
+        // 2) ✅ Intraday sparkline data (TwelveData time_series) for ACTIVE TAB ONLY
+        //    Populate cache used by quoteService.getSnapshot() sparkline mapping.
+        const tasks = (tab.symbols || []).map((s) =>
+          intradayService.fetch(tab.id, s.symbol, '1D', { force }).catch(() => null)
+        );
+        await Promise.allSettled(tasks);
+
+        // 3) Update UI
         if (state.activeTabId === tab.id) {
           header.setLastUpdated(quoteService.getTabLastUpdatedMs(tab.id));
           rerenderActive();
@@ -209,23 +207,20 @@ export function initTabsApp(mountEl) {
       if (queuedRefresh) {
         const next = queuedRefresh;
         queuedRefresh = null;
-        // Always refresh the CURRENT active tab with the queued intent.
         refreshActiveTab(next);
       }
     }
   }
 
-  // Refresh ALL tabs once (startup behavior).
-  // - Active tab runs "loud" (spinner + rerender)
-  // - Other tabs run silently to populate cache without spamming UI or tab switching.
   async function refreshAllTabs({ force = true, reason = 'startup' } = {}) {
+    // Active tab = loud refresh (also pulls intraday)
     await refreshActiveTab({ force, reason });
 
     const active = state.activeTabId;
 
+    // Other tabs: quotes only (no intraday) to avoid TwelveData credit spikes
     for (const tab of macroConfig.tabs) {
       if (tab.id === active) continue;
-
       try {
         if (tab.kind === 'macro') {
           await quoteService.prefetchTab(tab.id, tab.symbols, { force });
@@ -245,8 +240,7 @@ export function initTabsApp(mountEl) {
     showActiveView();
     updateHeaderForActiveTab();
     rerenderActive();
-
-    // IMPORTANT: no refresh on tab switch (prevents API spam).
+    // ✅ no refresh on tab switch
   }
 
   // initial view
@@ -273,7 +267,6 @@ export function initTabsApp(mountEl) {
       const onVisibility = () => {
         if (document.visibilityState === 'visible') {
           startInterval();
-          // optional: refresh on resume (respects quote TTL)
           refreshActiveTab({ force: false, reason: 'resume' });
         } else {
           stopInterval();
@@ -282,13 +275,11 @@ export function initTabsApp(mountEl) {
 
       document.addEventListener('visibilitychange', onVisibility);
 
-      // Startup: refresh ALL tabs once. Only start interval AFTER this finishes.
       refreshAllTabs({ force: true, reason: 'startup' }).finally(() => {
         if (disposed) return;
         if (document.visibilityState === 'visible') startInterval();
       });
 
-      // Also respect initial visibility state.
       if (document.visibilityState !== 'visible') stopInterval();
 
       return () => {
