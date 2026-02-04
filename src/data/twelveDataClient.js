@@ -9,7 +9,7 @@ const TWELVEDATA_BASE = 'https://api.twelvedata.com';
 const TWELVEDATA_KEYS = {
   global: 'c06be89dbb3f483eb8d5b126139bc91d',
   metals: 'aceb4424b004438ab40f83483b8e418f',
-  commods: 'aceb4424b004438ab40f83483b8e418f',
+  commods: '690cf497d4ed45a8a91948a38da23e70',
   rates: 'f50fcec0077b420ebf43941663ab81a4',
 };
 
