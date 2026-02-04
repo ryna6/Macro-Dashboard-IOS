@@ -1,20 +1,15 @@
 // src/data/intradayService.js
-//
-// Intraday OHLC provider using Twelve Data /time_series.
-// - Filters to 09:00–16:30 ET to avoid “flat overnight” charts
-// - Cached in localStorage
-// - Used for overview sparkline + expanded OHLC view
-
 import { storage } from './storage.js';
 import { twelveDataClient } from './twelveDataClient.js';
 import { nyTime } from './time.js';
 
-const CACHE_PREFIX = 'macrodb:intraday:v1:'; // + tabId:symbol:range
+const CACHE_PREFIX = 'macrodb:intraday:v2:'; // bump version to avoid stale cache collisions
 
-const TTL_MS = {
-  '1D': 2 * 60 * 1000,
-  '1W': 10 * 60 * 1000,
-  '1M': 30 * 60 * 1000
+// ✅ HARD COOLDOWNS (also used as cache TTL)
+const COOLDOWN_MS = {
+  '1D': 5 * 60 * 1000,        // 5 minutes
+  '1W': 15 * 60 * 1000,       // 15 minutes
+  '1M': 2 * 60 * 60 * 1000    // 2 hours
 };
 
 const SESSION_START = { hour: 9, minute: 0 };
@@ -106,42 +101,42 @@ function normalizeTimeSeriesToCandles(data) {
 }
 
 function postFilter(range, candles) {
-  const weekdaySession = (candles || []).filter((c) => !nyTime.isWeekend(c.t) && isWithinSession(c.t));
-  if (range === '1D') return pickRecentTradingDays(weekdaySession, 1); // ✅ always keep only latest day
-  if (range === '1W') return pickRecentTradingDays(weekdaySession, 5);
-  return pickRecentTradingDays(weekdaySession, 21);
+  const session = (candles || []).filter((c) => !nyTime.isWeekend(c.t) && isWithinSession(c.t));
+  if (range === '1D') return pickRecentTradingDays(session, 1);   // ✅ latest session only
+  if (range === '1W') return pickRecentTradingDays(session, 5);   // ✅ 5 trading days
+  return pickRecentTradingDays(session, 21);                      // ✅ ~21 trading days
 }
 
 function shouldTryFallback(err) {
   const msg = String(err?.message || '').toLowerCase();
-  // allow fallbacks on common plan/param errors
   return (
     msg.includes('interval') ||
     msg.includes('not supported') ||
     msg.includes('not available') ||
-    msg.includes('date') ||
+    msg.includes('invalid') ||
     msg.includes('format') ||
-    msg.includes('invalid')
+    msg.includes('date') ||
+    msg.includes('parameter')
   );
 }
 
 async function fetchTimeSeriesWithFallbacks({ tabId, symbol, range, signal }) {
-  // ✅ 1D: 5min (date=today) -> 15min (date=today) -> 5min (no date)
-  // ✅ 1W: 15min
-  // ✅ 1M: 2h -> 4h
+  // ✅ Requested defaults/fallbacks:
+  // 1D: 5min -> 15min
+  // 1W: 15min -> 30min
+  // 1M: 2h -> 4h
 
   const attempts = [];
 
   if (range === '1D') {
-    attempts.push({ interval: '5min', date: 'today', outputsize: 400 });
+    attempts.push({ interval: '5min', date: 'today', outputsize: 500 });
     attempts.push({ interval: '15min', date: 'today', outputsize: 260 });
-    attempts.push({ interval: '5min', outputsize: 600 }); // no date fallback
   } else if (range === '1W') {
-    attempts.push({ interval: '15min', outputsize: 1200 });
-    attempts.push({ interval: '30min', outputsize: 1200 });
+    attempts.push({ interval: '15min', outputsize: 1400 });
+    attempts.push({ interval: '30min', outputsize: 1400 });
   } else {
-    attempts.push({ interval: '2h', outputsize: 1600 });
-    attempts.push({ interval: '4h', outputsize: 1600 });
+    attempts.push({ interval: '2h', outputsize: 2000 });
+    attempts.push({ interval: '4h', outputsize: 2000 });
   }
 
   let lastErr = null;
@@ -162,7 +157,6 @@ async function fetchTimeSeriesWithFallbacks({ tabId, symbol, range, signal }) {
       if (!shouldTryFallback(err)) throw err;
     }
   }
-
   throw lastErr || new Error('Failed to fetch time series');
 }
 
@@ -175,23 +169,23 @@ export const intradayService = {
     const k = key(tabId, symbol, range);
     const cached = storage.getJSON(k);
 
-    const ttl = TTL_MS[String(range)] ?? (10 * 60 * 1000);
+    const cooldown = COOLDOWN_MS[String(range)] ?? (10 * 60 * 1000);
     const age = cached?.fetchedAtMs ? Date.now() - cached.fetchedAtMs : Infinity;
-    if (!force && cached?.candles && age < ttl) return cached;
+
+    // ✅ HARD cooldown: ignore "force" if we have cached data within cooldown
+    if (cached?.candles && age < cooldown) return cached;
+
+    // Normal “not forced” behavior also respects cooldown
+    if (!force && cached?.candles && age < cooldown) return cached;
 
     const { td } = await fetchTimeSeriesWithFallbacks({ tabId, symbol, range, signal });
     let candles = postFilter(range, normalizeTimeSeriesToCandles(td));
 
-    // If "today" is empty (weekend / before market), fallback to latest session from 1W fetch.
+    // If 1D is empty (weekend/before session), fall back to latest day from a 1W fetch
     if (range === '1D' && (!candles || candles.length < 2)) {
-      const { td: fallbackTd } = await fetchTimeSeriesWithFallbacks({
-        tabId,
-        symbol,
-        range: '1W',
-        signal
-      });
-      const fb = postFilter('1W', normalizeTimeSeriesToCandles(fallbackTd));
-      candles = pickRecentTradingDays(fb, 1);
+      const fb = await fetchTimeSeriesWithFallbacks({ tabId, symbol, range: '1W', signal });
+      const filtered = postFilter('1W', normalizeTimeSeriesToCandles(fb.td));
+      candles = pickRecentTradingDays(filtered, 1);
     }
 
     const obj = { candles, fetchedAtMs: Date.now() };
