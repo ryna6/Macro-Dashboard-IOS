@@ -1,14 +1,9 @@
 // src/data/intradayService.js
 //
 // Intraday OHLC provider using Twelve Data /time_series.
-//
-// Why:
-// - Twelve Data time_series can return intraday OHLC (1min/15min/4h...).
-// - Filter to session window (09:00–16:30 ET) to avoid “flat overnight” charts.
-//
-// Notes:
-// - Caches by (tabId, symbol, range) in localStorage
-// - Fetch is triggered only by refresh/auto-refresh/expanded open
+// - Filters to 09:00–16:30 ET to avoid “flat overnight” charts
+// - Cached in localStorage
+// - Used for overview sparkline + expanded OHLC view
 
 import { storage } from './storage.js';
 import { twelveDataClient } from './twelveDataClient.js';
@@ -110,17 +105,60 @@ function normalizeTimeSeriesToCandles(data) {
   return out;
 }
 
-function rangeParams(range) {
-  if (range === '1D') return { interval: '1min', date: 'today', outputsize: 800 };
-  if (range === '1W') return { interval: '15min', outputsize: 1200 };
-  return { interval: '4h', outputsize: 1500 }; // 1M
-}
-
 function postFilter(range, candles) {
   const weekdaySession = (candles || []).filter((c) => !nyTime.isWeekend(c.t) && isWithinSession(c.t));
   if (range === '1D') return weekdaySession;
   if (range === '1W') return pickRecentTradingDays(weekdaySession, 5);
   return pickRecentTradingDays(weekdaySession, 21);
+}
+
+function isLikelyIntervalBlocked(err) {
+  const msg = String(err?.message || '').toLowerCase();
+  return msg.includes('interval') || msg.includes('not supported') || msg.includes('not available');
+}
+
+async function fetchTimeSeriesWithFallbacks({ tabId, symbol, range, signal }) {
+  // Primary params per range:
+  // - 1D: 5min (fallback -> 15min if blocked)
+  // - 1W: 15min
+  // - 1M: 2h (fallback -> 4h if blocked)
+
+  const attempts = [];
+
+  if (range === '1D') {
+    attempts.push({ interval: '5min', date: 'today', outputsize: 350 });
+    attempts.push({ interval: '15min', date: 'today', outputsize: 200 });
+  } else if (range === '1W') {
+    attempts.push({ interval: '15min', outputsize: 1200 });
+  } else {
+    attempts.push({ interval: '2h', outputsize: 1500 });
+    attempts.push({ interval: '4h', outputsize: 1500 });
+  }
+
+  let lastErr = null;
+  for (const a of attempts) {
+    try {
+      const td = await twelveDataClient.timeSeries({
+        keyName: tabId,
+        symbol,
+        interval: a.interval,
+        outputsize: a.outputsize,
+        date: a.date,
+        timezone: 'America/New_York',
+        signal
+      });
+      return { td, usedInterval: a.interval };
+    } catch (err) {
+      lastErr = err;
+      if (range === '1D' || range === '1M') {
+        // Only continue fallbacks if it looks like an interval/plan restriction.
+        if (!isLikelyIntervalBlocked(err)) throw err;
+      } else {
+        throw err;
+      }
+    }
+  }
+  throw lastErr || new Error('Failed to fetch time series');
 }
 
 export const intradayService = {
@@ -136,31 +174,19 @@ export const intradayService = {
     const age = cached?.fetchedAtMs ? Date.now() - cached.fetchedAtMs : Infinity;
     if (!force && cached?.candles && age < ttl) return cached;
 
-    const { interval, date, outputsize } = rangeParams(range);
-
-    const td = await twelveDataClient.timeSeries({
-      keyName: tabId,
-      symbol,
-      interval,
-      outputsize,
-      date,
-      timezone: 'America/New_York',
-      signal
-    });
-
+    const { td } = await fetchTimeSeriesWithFallbacks({ tabId, symbol, range, signal });
     let candles = postFilter(range, normalizeTimeSeriesToCandles(td));
 
     // If "today" is empty (common outside session), fallback to trailing window and pick latest session.
     if (range === '1D' && (!candles || candles.length < 2)) {
-      const fallback = await twelveDataClient.timeSeries({
-        keyName: tabId,
+      const { td: fallbackTd } = await fetchTimeSeriesWithFallbacks({
+        tabId,
         symbol,
-        interval: '1min',
-        outputsize: 1200,
-        timezone: 'America/New_York',
+        range: '1W',
         signal
       });
-      const fb = postFilter('1W', normalizeTimeSeriesToCandles(fallback));
+
+      const fb = postFilter('1W', normalizeTimeSeriesToCandles(fallbackTd));
       candles = pickRecentTradingDays(fb, 1);
     }
 
