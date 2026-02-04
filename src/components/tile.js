@@ -1,5 +1,4 @@
 // src/components/tile.js
-import { candleService } from '../data/candleService.js';
 import { quoteService } from '../data/quoteService.js';
 import { openTileExpanded } from './tileExpanded.js';
 
@@ -73,7 +72,6 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   const top = el('div', 'tile-top');
   const logo = el('div', 'tile-logo');
 
-  // IMG + fallback text
   const img = document.createElement('img');
   img.alt = '';
   img.decoding = 'async';
@@ -118,8 +116,6 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
 
   function paint() {
     const snap = quoteService.getSnapshot(tabId, symbolSpec, timeframe);
-
-    // Prefer fixed local logo
     const logoUrl = fixedLogoUrl(symbolSpec) || snap.logoUrl;
 
     if (logoUrl) {
@@ -146,12 +142,11 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   }
 
   function expand() {
-    const candles = candleService.getCandles(tabId, symbolSpec, timeframe);
     openTileExpanded({
-      symbol: symbolSpec.symbol,
+      tabId,
+      symbolSpec,
       displayName: symbolSpec.name || symbolSpec.symbol,
-      timeframeLabel: timeframe,
-      candles
+      initialRange: timeframe
     });
   }
 
@@ -168,11 +163,6 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
     }
   });
 
-  // IMPORTANT: paint-only on mount (no network). Network refresh is driven by:
-  // - app open refreshAllTabs()
-  // - manual refresh button (active tab)
-  // - auto refresh timer (active tab, only while visible)
   paint();
-
   return { el: root, update: paint };
 }
