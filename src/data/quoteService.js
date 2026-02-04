@@ -4,12 +4,15 @@
 // - Stocks/ETFs: /quote
 // - Logos: LOCAL ONLY from /public/icons/symbols/<SYMBOL>.png (or spec.logoUrl if provided)
 //
-// 1W/1M % change:
-// - Finnhub quote alone doesn’t provide historical series; we leave 1W/1M as "—" for now.
+// % change by timeframe:
+// - 1D: from Finnhub quote dp/pc when available.
+// - 1W/1M: computed from DAILY candle baselines when available (see rangeChangeService).
+//   If candles are blocked on your plan, 1W/1M will be disabled automatically (cooldown) to avoid spam.
 
 import { apiClient } from './apiClient.js';
 import { storage } from './storage.js';
 import { TIMEFRAMES } from './candleService.js';
+import { rangeChangeService } from './rangeChangeService.js';
 
 const QUOTE_CACHE_PREFIX = 'macrodb:quotes:v1:'; // + tabId
 
@@ -81,6 +84,16 @@ export const quoteService = {
     return loadTabDisk(tabId)?.lastUpdatedMs || 0;
   },
 
+  // For UI enabling/disabling 1W/1M options.
+  isTimeframeEnabled(tabId, tf) {
+    return rangeChangeService.isTimeframeEnabled(tabId, tf);
+  },
+
+  // Best-effort: fetch daily baselines for 1W/1M change.
+  async ensureRangeBaselines(tabId, specs, { force = false } = {}) {
+    return rangeChangeService.ensureBaselinesForTab(tabId, specs, { force });
+  },
+
   getSnapshot(tabId, spec, timeframe) {
     mergeDiskIntoMem(tabId);
 
@@ -92,13 +105,14 @@ export const quoteService = {
 
     let changePct = null;
 
-    // 1D: use Finnhub quote dp/pc when available
     if (last != null) {
       if (timeframe === TIMEFRAMES.ONE_DAY) {
+        // 1D: use Finnhub quote dp/pc when available
         if (isFiniteNum(q?.dp)) changePct = q.dp;
         else if (isFiniteNum(q?.pc) && q.pc !== 0) changePct = pctChange(q.pc, last);
-      } else {
-        changePct = null; // quote-only, no history
+      } else if (timeframe === TIMEFRAMES.ONE_WEEK || timeframe === TIMEFRAMES.ONE_MONTH) {
+        const baseline = rangeChangeService.getBaselineClose(tabId, spec, timeframe);
+        if (baseline != null) changePct = pctChange(baseline, last);
       }
     }
 
