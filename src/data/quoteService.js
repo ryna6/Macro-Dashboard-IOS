@@ -8,11 +8,17 @@
 // - 1D: from Finnhub quote dp/pc when available.
 // - 1W/1M: computed from DAILY candle baselines when available (see rangeChangeService).
 //   If candles are blocked on your plan, 1W/1M will be disabled automatically (cooldown) to avoid spam.
+//
+// Sparkline source (important):
+// - The overview sparkline is NOT from candles. It’s built from periodic quote refreshes.
+// - To avoid “flat overnight” segments, we only record and display points during the regular session window
+//   (default 09:00–16:30 America/New_York).
 
 import { apiClient } from './apiClient.js';
 import { storage } from './storage.js';
 import { TIMEFRAMES } from './candleService.js';
 import { rangeChangeService } from './rangeChangeService.js';
+import { nyTime } from './time.js';
 
 const QUOTE_CACHE_PREFIX = 'macrodb:quotes:v1:'; // + tabId
 
@@ -20,7 +26,8 @@ const QUOTE_CACHE_PREFIX = 'macrodb:quotes:v1:'; // + tabId
 const QUOTE_TTL_MS = 2 * 60 * 1000; // quote refresh interval tolerance
 
 // Small in-memory sparkline built from quote refreshes
-const SPARK_MAX_POINTS = 40;
+// NOTE: 09:00–16:30 is 450 minutes. At 5-min cadence that’s ~90 pts; at 2-min cadence ~225 pts.
+const SPARK_MAX_POINTS = 260;
 
 // Light rate-limit spacing when prefetching whole tabs
 const REQUEST_SPACING_MS = 120;
@@ -77,6 +84,68 @@ function pctChange(from, to) {
   return ((to - from) / from) * 100;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Market session window helpers (America/New_York)
+// Defaults are intentionally “wider” than 09:30–16:00 so you can include a bit of pre/post if desired.
+// You requested ~09:00–16:30.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SESSION_START = { hour: 9, minute: 0 };
+const SESSION_END = { hour: 16, minute: 30 };
+
+function sessionBoundsForYmd(ymd) {
+  // ymd = "YYYY-MM-DD"
+  const m = String(ymd || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return { startMs: 0, endMs: 0 };
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+
+  const startSec = nyTime.zonedToUtcSec({
+    year,
+    month,
+    day,
+    hour: SESSION_START.hour,
+    minute: SESSION_START.minute,
+    second: 0
+  });
+
+  const endSec = nyTime.zonedToUtcSec({
+    year,
+    month,
+    day,
+    hour: SESSION_END.hour,
+    minute: SESSION_END.minute,
+    second: 0
+  });
+
+  return { startMs: startSec * 1000, endMs: endSec * 1000 };
+}
+
+function isInSessionMs(ms) {
+  const tSec = Math.floor(ms / 1000);
+  const ymd = nyTime.ymd(tSec);
+  const { startMs, endMs } = sessionBoundsForYmd(ymd);
+  return ms >= startMs && ms <= endMs;
+}
+
+function filterSparkToMostRecentSession(spark) {
+  if (!Array.isArray(spark) || spark.length < 2) return Array.isArray(spark) ? spark : [];
+
+  const last = spark[spark.length - 1];
+  const lastSec = Math.floor((last?.t || 0) / 1000);
+  const ymd = nyTime.ymd(lastSec);
+  const { startMs, endMs } = sessionBoundsForYmd(ymd);
+
+  const filtered = spark.filter((p) => {
+    const t = p?.t || 0;
+    return t >= startMs && t <= endMs;
+  });
+
+  // Keep the newest N points (storage protection)
+  return filtered.length > SPARK_MAX_POINTS ? filtered.slice(-SPARK_MAX_POINTS) : filtered;
+}
+
 export const quoteService = {
   TIMEFRAMES,
 
@@ -116,7 +185,9 @@ export const quoteService = {
       }
     }
 
-    const spark = Array.isArray(rec?.spark) ? rec.spark : [];
+    // Sparkline: show only the most recent session window to avoid “overnight flat”
+    const sparkRaw = Array.isArray(rec?.spark) ? rec.spark : [];
+    const spark = filterSparkToMostRecentSession(sparkRaw);
 
     return {
       last,
@@ -187,9 +258,32 @@ export const quoteService = {
       existing.last = q.c;
       existing.updatedMs = nowMs();
 
+      // Sparkline recording policy:
+      // - Record points ONLY during the regular session window (09:00–16:30 ET)
+      // - Reset the series when a new session day begins (but only when we are IN session)
+      const inSession = isInSessionMs(existing.updatedMs);
+
       existing.spark ||= [];
-      existing.spark.push({ t: existing.updatedMs, c: q.c });
-      if (existing.spark.length > SPARK_MAX_POINTS) existing.spark = existing.spark.slice(-SPARK_MAX_POINTS);
+
+      if (inSession) {
+        // If we have points from a prior day/session, reset when the new session starts.
+        if (existing.spark.length) {
+          const lastPt = existing.spark[existing.spark.length - 1];
+          const lastSec = Math.floor((lastPt?.t || 0) / 1000);
+          const lastYmd = nyTime.ymd(lastSec);
+
+          const curSec = Math.floor(existing.updatedMs / 1000);
+          const curYmd = nyTime.ymd(curSec);
+
+          if (lastYmd !== curYmd) existing.spark = [];
+        }
+
+        existing.spark.push({ t: existing.updatedMs, c: q.c });
+        if (existing.spark.length > SPARK_MAX_POINTS) existing.spark = existing.spark.slice(-SPARK_MAX_POINTS);
+      } else {
+        // Outside session: do NOT append new points (prevents “overnight flat”).
+        // We still keep whatever the most recent session series was, so the tile has a meaningful line.
+      }
 
       writeSymbol(tabId, key, existing);
       return true;
