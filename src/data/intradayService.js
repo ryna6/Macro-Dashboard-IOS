@@ -1,96 +1,140 @@
+// src/data/intradayService.js
+//
+// Intraday OHLC provider using Twelve Data /time_series.
+//
+// Why:
+// - Twelve Data time_series can return intraday OHLC (1min/15min/4h...).
+// - Filter to session window (09:00–16:30 ET) to avoid “flat overnight” charts.
+//
+// Notes:
+// - Caches by (tabId, symbol, range) in localStorage
+// - Fetch is triggered only by refresh/auto-refresh/expanded open
+
 import { storage } from './storage.js';
 import { twelveDataClient } from './twelveDataClient.js';
+import { nyTime } from './time.js';
 
-const CACHE_PREFIX = 'macrodb:intraday:v1:'; // + tabId + ':' + symbol + ':' + range
-const NY_TZ = 'America/New_York';
+const CACHE_PREFIX = 'macrodb:intraday:v1:'; // + tabId:symbol:range
 
-// Market window you asked for
-const SESSION_START = { h: 9, m: 0 };
-const SESSION_END = { h: 16, m: 30 };
+const TTL_MS = {
+  '1D': 2 * 60 * 1000,
+  '1W': 10 * 60 * 1000,
+  '1M': 30 * 60 * 1000
+};
 
-function key(tabId, symbol, range) {
-  return `${CACHE_PREFIX}${tabId}:${String(symbol).toUpperCase()}:${range}`;
+const SESSION_START = { hour: 9, minute: 0 };
+const SESSION_END = { hour: 16, minute: 30 };
+
+const REQUEST_SPACING_MS = 120;
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
-function parseBars(td) {
-  // TwelveData returns newest-first; we sort oldest-first.
-  const values = Array.isArray(td?.values) ? td.values : [];
-  const bars = [];
+function key(tabId, symbol, range) {
+  return `${CACHE_PREFIX}${String(tabId)}:${String(symbol).toUpperCase()}:${String(range)}`;
+}
+
+function parseYmdHms(dt) {
+  const s = String(dt || '').trim();
+  const m = s.match(/^([0-9]{4})-([0-9]{2})-([0-9]{2})(?:[ T]([0-9]{2}):([0-9]{2})(?::([0-9]{2}))?)?$/);
+  if (!m) return null;
+  return {
+    year: Number(m[1]),
+    month: Number(m[2]),
+    day: Number(m[3]),
+    hour: m[4] == null ? 0 : Number(m[4]),
+    minute: m[5] == null ? 0 : Number(m[5]),
+    second: m[6] == null ? 0 : Number(m[6])
+  };
+}
+
+function toUtcSecFromNyDatetimeString(dt) {
+  const parts = parseYmdHms(dt);
+  if (!parts) {
+    const t = new Date(String(dt || '')).getTime();
+    return Number.isFinite(t) ? Math.floor(t / 1000) : null;
+  }
+
+  return nyTime.zonedToUtcSec({
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+    hour: parts.hour,
+    minute: parts.minute,
+    second: parts.second
+  });
+}
+
+function isWithinSession(utcSec) {
+  if (!Number.isFinite(utcSec)) return false;
+  const p = nyTime.parts(utcSec);
+  const afterStart = p.hour > SESSION_START.hour || (p.hour === SESSION_START.hour && p.minute >= SESSION_START.minute);
+  const beforeEnd = p.hour < SESSION_END.hour || (p.hour === SESSION_END.hour && p.minute <= SESSION_END.minute);
+  return afterStart && beforeEnd;
+}
+
+function pickRecentTradingDays(candles, nDays) {
+  const days = [];
+  const seen = new Set();
+  for (let i = candles.length - 1; i >= 0; i--) {
+    const ymd = nyTime.ymd(candles[i].t);
+    if (!seen.has(ymd)) {
+      seen.add(ymd);
+      days.push(ymd);
+      if (days.length >= nDays) break;
+    }
+  }
+  if (!days.length) return [];
+  const allowed = new Set(days);
+  return candles.filter((c) => allowed.has(nyTime.ymd(c.t)));
+}
+
+function normalizeTimeSeriesToCandles(data) {
+  const values = data?.values || data?.data?.values || [];
+  if (!Array.isArray(values) || values.length === 0) return [];
+
+  const out = [];
   for (const v of values) {
-    const dt = v?.datetime;
-    const t = new Date(dt).getTime();
+    const dt = v?.datetime || v?.date || v?.timestamp;
+    const t = toUtcSecFromNyDatetimeString(dt);
     const o = Number(v?.open);
     const h = Number(v?.high);
     const l = Number(v?.low);
     const c = Number(v?.close);
     if (!Number.isFinite(t) || !Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c)) continue;
-    bars.push({ t, o, h, l, c });
+    out.push({ t, o, h, l, c });
   }
-  bars.sort((a, b) => a.t - b.t);
-  return bars;
-}
 
-function withinSessionNY(dt) {
-  // dt is JS Date in local runtime tz, but the string from TwelveData is already in exchange/timezone context
-  // We just filter by HH:MM extracted from the timestamp text in practice.
-  const hh = dt.getHours();
-  const mm = dt.getMinutes();
-  const afterStart = (hh > SESSION_START.h) || (hh === SESSION_START.h && mm >= SESSION_START.m);
-  const beforeEnd = (hh < SESSION_END.h) || (hh === SESSION_END.h && mm <= SESSION_END.m);
-  return afterStart && beforeEnd;
-}
-
-function filterToRecentSessions(bars, maxDays) {
-  // Keep only last N unique calendar days (based on bar timestamp).
-  const days = [];
-  const out = [];
-  for (let i = bars.length - 1; i >= 0; i--) {
-    const d = new Date(bars[i].t);
-    const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    if (!days.includes(ymd)) days.push(ymd);
-    if (days.length > maxDays) break;
-  }
-  const keep = new Set(days);
-  for (const b of bars) {
-    const d = new Date(b.t);
-    const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    if (!keep.has(ymd)) continue;
-    if (!withinSessionNY(d)) continue;
-    out.push(b);
-  }
+  out.sort((a, b) => a.t - b.t);
   return out;
 }
 
 function rangeParams(range) {
-  // Keep requests efficient.
-  if (range === '1D') return { interval: '1min', date: 'today', outputsize: 600 };
+  if (range === '1D') return { interval: '1min', date: 'today', outputsize: 800 };
   if (range === '1W') return { interval: '15min', outputsize: 1200 };
-  return { interval: '1h', outputsize: 1500 }; // '1M'
+  return { interval: '4h', outputsize: 1500 }; // 1M
 }
 
-function postFilter(range, bars) {
-  if (range === '1D') {
-    // Today session only
-    return bars.filter((b) => withinSessionNY(new Date(b.t)));
-  }
-  if (range === '1W') return filterToRecentSessions(bars, 5);
-  return filterToRecentSessions(bars, 21); // ~1M trading days
+function postFilter(range, candles) {
+  const weekdaySession = (candles || []).filter((c) => !nyTime.isWeekend(c.t) && isWithinSession(c.t));
+  if (range === '1D') return weekdaySession;
+  if (range === '1W') return pickRecentTradingDays(weekdaySession, 5);
+  return pickRecentTradingDays(weekdaySession, 21);
 }
 
 export const intradayService = {
   getCached(tabId, symbol, range) {
-    const obj = storage.getJSON(key(tabId, symbol, range));
-    return obj?.bars ? obj : null;
+    return storage.getJSON(key(tabId, symbol, range));
   },
 
-  async fetch(tabId, symbol, range, { force = false } = {}) {
-    const cacheKey = key(tabId, symbol, range);
-    const cached = storage.getJSON(cacheKey);
+  async fetch(tabId, symbol, range, { force = false, signal } = {}) {
+    const k = key(tabId, symbol, range);
+    const cached = storage.getJSON(k);
 
-    const ttlMs = range === '1D' ? 2 * 60 * 1000 : 30 * 60 * 1000;
-    const age = cached?.fetchedAtMs ? (Date.now() - cached.fetchedAtMs) : Infinity;
-
-    if (!force && cached?.bars && age < ttlMs) return cached;
+    const ttl = TTL_MS[String(range)] ?? (10 * 60 * 1000);
+    const age = cached?.fetchedAtMs ? Date.now() - cached.fetchedAtMs : Infinity;
+    if (!force && cached?.candles && age < ttl) return cached;
 
     const { interval, date, outputsize } = rangeParams(range);
 
@@ -100,12 +144,37 @@ export const intradayService = {
       interval,
       outputsize,
       date,
-      timezone: NY_TZ
+      timezone: 'America/New_York',
+      signal
     });
 
-    const bars = postFilter(range, parseBars(td));
-    const obj = { bars, fetchedAtMs: Date.now() };
-    storage.setJSON(cacheKey, obj);
+    let candles = postFilter(range, normalizeTimeSeriesToCandles(td));
+
+    // If "today" is empty (common outside session), fallback to trailing window and pick latest session.
+    if (range === '1D' && (!candles || candles.length < 2)) {
+      const fallback = await twelveDataClient.timeSeries({
+        keyName: tabId,
+        symbol,
+        interval: '1min',
+        outputsize: 1200,
+        timezone: 'America/New_York',
+        signal
+      });
+      const fb = postFilter('1W', normalizeTimeSeriesToCandles(fallback));
+      candles = pickRecentTradingDays(fb, 1);
+    }
+
+    const obj = { candles, fetchedAtMs: Date.now() };
+    storage.setJSON(k, obj);
     return obj;
+  },
+
+  async prefetchTab(tabId, specs, range, { force = false } = {}) {
+    const list = Array.isArray(specs) ? specs : [];
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i];
+      await this.fetch(tabId, s.symbol, range, { force }).catch(() => null);
+      if (i < list.length - 1) await sleep(REQUEST_SPACING_MS);
+    }
   }
 };
