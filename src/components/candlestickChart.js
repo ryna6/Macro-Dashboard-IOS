@@ -65,6 +65,19 @@ export function renderCandlestickChart(container, candles, opts = {}) {
   });
 
   series.setData(data);
+
+  // ✅ Previous close horizontal line (if provided)
+  if (Number.isFinite(opts.prevClose)) {
+    series.createPriceLine({
+      price: opts.prevClose,
+      color: 'rgba(255,255,255,0.35)',
+      lineWidth: 1,
+      lineStyle: 2, // dashed
+      axisLabelVisible: true,
+      title: 'Prev Close'
+    });
+  }
+
   chart.timeScale().fitContent();
 
   const prevent = (e) => e.preventDefault();
@@ -99,18 +112,15 @@ export function renderCandlestickChart(container, candles, opts = {}) {
   };
 
   chart.subscribeCrosshairMove((param) => {
-    // Avoid relying on param.seriesData shape (it differs across versions).
     if (!param || !param.time || !param.point) {
       if (!scrubbing) showTip(null);
       return;
     }
-
     const bar = barByTime.get(param.time) || null;
     if (!bar) {
       if (!scrubbing) showTip(null);
       return;
     }
-
     showTip(bar, param.point);
   });
 
