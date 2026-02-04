@@ -7,7 +7,7 @@ import { createHeader } from './header.js';
 import { renderTileGrid } from './tileGrid.js';
 import { initCalendarView } from './calendarView.js';
 
-const FIVE_MIN_MS = 5 * 60 * 1000;
+const AUTO_REFRESH = 10 * 60 * 1000;
 
 function el(tag, className) {
   const n = document.createElement(tag);
@@ -261,7 +261,7 @@ export function initTabsApp(mountEl) {
         intervalId = setInterval(() => {
           if (document.visibilityState !== 'visible') return;
           refreshActiveTab({ force: false, reason: 'timer' });
-        }, FIVE_MIN_MS);
+        }, AUTO_REFRESH);
       };
 
       const onVisibility = () => {
