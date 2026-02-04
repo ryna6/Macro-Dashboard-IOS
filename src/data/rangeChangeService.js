@@ -7,8 +7,12 @@
 // - For 1W/1M, we need historical closes.
 // - On some free plans, /stock/candle may be blocked (403). If that happens, we
 //   back off and disable 1W/1M for a cooldown period to avoid request spam.
+//
+// Update:
+// - If Finnhub daily candles are blocked, we now FALL BACK to Twelve Data /time_series daily closes.
 
 import { apiClient } from './apiClient.js';
+import { twelveDataClient } from './twelveDataClient.js';
 import { storage } from './storage.js';
 import { TIMEFRAMES } from './candleService.js';
 
@@ -88,29 +92,72 @@ function computeBaselinesFromCloses(closes) {
   return { lastClose: last, weekClose: w, monthClose: m };
 }
 
+function parseTwelveDataDailyToFinnhubShape(data) {
+  // Twelve Data /time_series usually returns:
+  // { status: "ok", meta: {...}, values: [{ datetime: "...", close: "123.45", ... }, ...] }
+  // We normalize to a minimal Finnhub-like object: { s: "ok", c: number[] } where c is chronological ASC.
+  const values = data?.values || data?.data?.values || [];
+  if (!Array.isArray(values) || values.length === 0) return { s: 'no_data', c: [] };
+
+  const rows = [];
+  for (const v of values) {
+    const dt = v?.datetime || v?.date || v?.timestamp;
+    const t = Number.isFinite(Number(dt))
+      ? Number(dt) * 1000
+      : new Date(String(dt)).getTime();
+
+    const closeNum = Number(v?.close);
+    if (!Number.isFinite(closeNum)) continue;
+
+    rows.push({ t, close: closeNum });
+  }
+
+  rows.sort((a, b) => (a.t || 0) - (b.t || 0));
+  const closes = rows.map((r) => r.close);
+  return { s: 'ok', c: closes };
+}
+
 async function fetchDailyCandles(tabId, spec) {
-  // pull ~3 months to ensure we have enough points for 1M even with holidays
+  // We only need ~1-3 months to cover 1W/1M baselines even with holidays.
   const to = nowSec();
   const from = to - 90 * 24 * 60 * 60;
 
-  const endpoint = pickEndpoint(spec);
-  if (endpoint === 'forex') {
-    return apiClient.forexCandles({
+  // 1) Try Finnhub first (keeps Twelve Data credits near-zero if Finnhub candles are available).
+  try {
+    const endpoint = pickEndpoint(spec);
+    if (endpoint === 'forex') {
+      return await apiClient.forexCandles({
+        keyName: tabId,
+        symbol: spec.symbol,
+        resolution: 'D',
+        from,
+        to
+      });
+    }
+
+    return await apiClient.stockCandles({
       keyName: tabId,
       symbol: spec.symbol,
       resolution: 'D',
       from,
       to
     });
+  } catch (err) {
+    // 2) Fallback: Twelve Data daily time series (works well for 1W/1M closes).
+    // Twelve Data returns string values; we normalize to a minimal Finnhub-like shape.
+    try {
+      const td = await twelveDataClient.timeSeries({
+        keyName: tabId,
+        symbol: spec.symbol,
+        interval: '1day',
+        outputsize: 60
+      });
+      return parseTwelveDataDailyToFinnhubShape(td);
+    } catch (_) {
+      // If fallback also fails, propagate the original error (so cooldown logic stays consistent).
+      throw err;
+    }
   }
-
-  return apiClient.stockCandles({
-    keyName: tabId,
-    symbol: spec.symbol,
-    resolution: 'D',
-    from,
-    to
-  });
 }
 
 export const rangeChangeService = {
