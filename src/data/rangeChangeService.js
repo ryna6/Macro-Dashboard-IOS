@@ -1,15 +1,11 @@
 // src/data/rangeChangeService.js
 //
-// Computes 1W / 1M % change using DAILY candles when available.
+// Computes 1W / 1M % change using DAILY closes.
+// Primary attempt: Finnhub daily candles
+// Fallback: Twelve Data daily time_series
 //
-// Why this exists:
-// - Finnhub /quote only provides 1D change (dp/pc).
-// - For 1W/1M, we need historical closes.
-// - On some free plans, /stock/candle may be blocked (403). If that happens, we
-//   back off and disable 1W/1M for a cooldown period to avoid request spam.
-//
-// Update:
-// - If Finnhub daily candles are blocked, we now FALL BACK to Twelve Data /time_series daily closes.
+// Important change: we do NOT hard-disable 1W/1M via cooldown anymore.
+// If some symbols fail, we keep timeframes enabled and return null baselines for those symbols.
 
 import { apiClient } from './apiClient.js';
 import { twelveDataClient } from './twelveDataClient.js';
@@ -17,14 +13,7 @@ import { storage } from './storage.js';
 import { TIMEFRAMES } from './candleService.js';
 
 const CACHE_PREFIX = 'macrodb:ranges:v1:'; // + tabId
-
-// Baselines don't need to be super fresh; daily is fine.
 const BASELINE_TTL_MS = 12 * 60 * 60 * 1000; // 12h
-
-// If Finnhub blocks candles (403), stop trying for a while.
-const BLOCK_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24h
-
-// Light spacing between symbols to avoid burst rate-limits.
 const REQUEST_SPACING_MS = 120;
 
 function nowMs() {
@@ -49,7 +38,6 @@ function load(tabId) {
     storage.getJSON(`${CACHE_PREFIX}${tabId}`) || {
       baselines: {}, // key -> { '1W': number|null, '1M': number|null }
       fetchedAtMs: 0,
-      blockedUntilMs: 0,
       lastError: null
     }
   );
@@ -59,16 +47,7 @@ function save(tabId, obj) {
   storage.setJSON(`${CACHE_PREFIX}${tabId}`, obj);
 }
 
-function is403(err) {
-  const status = err?.status;
-  if (status === 403) return true;
-  const msg = String(err?.message || '').toLowerCase();
-  return msg.includes('403') || msg.includes('access') || msg.includes('forbidden') || msg.includes('premium');
-}
-
 function pickEndpoint(spec) {
-  // This repo supports both stock and forex candles via apiClient.
-  // Most of your symbols are ETFs/stocks, so default to stockCandles.
   if (String(spec?.type || '').toLowerCase() === 'forex') return 'forex';
   return 'stock';
 }
@@ -81,21 +60,12 @@ function parseCloses(json) {
 
 function computeBaselinesFromCloses(closes) {
   const n = closes.length;
-  const last = n ? closes[n - 1] : null;
-
-  // 5 trading sessions ago (approx 1W)
-  const w = n >= 6 ? closes[n - 6] : null;
-
-  // ~21 trading sessions ago (approx 1M)
-  const m = n >= 22 ? closes[n - 22] : null;
-
-  return { lastClose: last, weekClose: w, monthClose: m };
+  const w = n >= 6 ? closes[n - 6] : null;   // ~5 trading days ago
+  const m = n >= 22 ? closes[n - 22] : null; // ~21 trading days ago
+  return { weekClose: w, monthClose: m };
 }
 
 function parseTwelveDataDailyToFinnhubShape(data) {
-  // Twelve Data /time_series usually returns:
-  // { status: "ok", meta: {...}, values: [{ datetime: "...", close: "123.45", ... }, ...] }
-  // We normalize to a minimal Finnhub-like object: { s: "ok", c: number[] } where c is chronological ASC.
   const values = data?.values || data?.data?.values || [];
   if (!Array.isArray(values) || values.length === 0) return { s: 'no_data', c: [] };
 
@@ -117,64 +87,83 @@ function parseTwelveDataDailyToFinnhubShape(data) {
   return { s: 'ok', c: closes };
 }
 
-async function fetchDailyCandles(tabId, spec) {
-  // We only need ~1-3 months to cover 1W/1M baselines even with holidays.
+async function fetchFinnhubDaily(tabId, spec) {
   const to = nowSec();
-  const from = to - 90 * 24 * 60 * 60;
+  const from = to - 120 * 24 * 60 * 60; // 120d window to comfortably cover holidays
 
-  // 1) Try Finnhub first (keeps Twelve Data credits near-zero if Finnhub candles are available).
-  try {
-    const endpoint = pickEndpoint(spec);
-    if (endpoint === 'forex') {
-      return await apiClient.forexCandles({
-        keyName: tabId,
-        symbol: spec.symbol,
-        resolution: 'D',
-        from,
-        to
-      });
-    }
-
-    return await apiClient.stockCandles({
+  const endpoint = pickEndpoint(spec);
+  if (endpoint === 'forex') {
+    return await apiClient.forexCandles({
       keyName: tabId,
       symbol: spec.symbol,
       resolution: 'D',
       from,
       to
     });
-  } catch (err) {
-    // 2) Fallback: Twelve Data daily time series (works well for 1W/1M closes).
-    // Twelve Data returns string values; we normalize to a minimal Finnhub-like shape.
+  }
+
+  return await apiClient.stockCandles({
+    keyName: tabId,
+    symbol: spec.symbol,
+    resolution: 'D',
+    from,
+    to
+  });
+}
+
+async function fetchTwelveDaily(tabId, spec) {
+  const td = await twelveDataClient.timeSeries({
+    keyName: tabId,
+    symbol: spec.symbol,
+    interval: '1day',
+    outputsize: 120
+  });
+  return parseTwelveDataDailyToFinnhubShape(td);
+}
+
+async function fetchDailyCandles(tabId, spec) {
+  // Try primary spec first, then fallback symbol if present.
+  const tries = [spec];
+  if (spec?.fallback) {
+    tries.push({ ...spec, type: 'stock', symbol: spec.fallback });
+  }
+
+  let lastErr = null;
+
+  for (const s of tries) {
+    // 1) Finnhub attempt
     try {
-      const td = await twelveDataClient.timeSeries({
-        keyName: tabId,
-        symbol: spec.symbol,
-        interval: '1day',
-        outputsize: 60
-      });
-      return parseTwelveDataDailyToFinnhubShape(td);
-    } catch (_) {
-      // If fallback also fails, propagate the original error (so cooldown logic stays consistent).
-      throw err;
+      const j = await fetchFinnhubDaily(tabId, s);
+      const closes = parseCloses(j);
+      if (closes.length >= 22) return j;
+      // If too short, fall through to TwelveData.
+    } catch (e) {
+      lastErr = e;
+    }
+
+    // 2) TwelveData attempt
+    try {
+      const j2 = await fetchTwelveDaily(tabId, s);
+      const closes2 = parseCloses(j2);
+      if (closes2.length >= 22) return j2;
+      lastErr = new Error('Not enough daily data for baseline computation.');
+    } catch (e2) {
+      lastErr = e2;
     }
   }
+
+  throw lastErr || new Error('Failed to fetch daily candles');
 }
 
 export const rangeChangeService = {
   TIMEFRAMES,
 
-  isBlocked(tabId) {
-    const disk = load(tabId);
-    return (disk.blockedUntilMs || 0) > nowMs();
-  },
-
-  // Returns true if the timeframe can be attempted (not in cooldown).
+  // ✅ Never hard-disable 1W/1M; allow selection and show null baselines as "—"
   isTimeframeEnabled(tabId, tf) {
     if (tf === TIMEFRAMES.ONE_DAY) return true;
-    return !this.isBlocked(tabId);
+    return true;
   },
 
-  // Returns baseline close for the timeframe (or null).
   getBaselineClose(tabId, spec, tf) {
     if (tf === TIMEFRAMES.ONE_DAY) return null;
     const disk = load(tabId);
@@ -186,60 +175,50 @@ export const rangeChangeService = {
     return null;
   },
 
-  // Ensure baselines exist (best-effort). Returns true if baselines should be usable.
   async ensureBaselinesForTab(tabId, specs, { force = false } = {}) {
     const disk = load(tabId);
-
-    // Cooldown guard
-    if ((disk.blockedUntilMs || 0) > nowMs()) return false;
 
     const age = nowMs() - (disk.fetchedAtMs || 0);
     if (!force && disk.fetchedAtMs && age < BASELINE_TTL_MS) return true;
 
     const list = Array.isArray(specs) ? specs : [];
 
-    try {
-      const next = {
-        ...disk,
-        baselines: { ...(disk.baselines || {}) },
-        lastError: null
-      };
+    const next = {
+      ...disk,
+      baselines: { ...(disk.baselines || {}) },
+      lastError: null
+    };
 
-      for (let i = 0; i < list.length; i++) {
-        const spec = list[i];
-        const key = symbolKey(spec);
+    let anySuccess = false;
 
-        try {
-          const json = await fetchDailyCandles(tabId, spec);
-          const closes = parseCloses(json);
-          const { weekClose, monthClose } = computeBaselinesFromCloses(closes);
+    for (let i = 0; i < list.length; i++) {
+      const spec = list[i];
+      const k = symbolKey(spec);
 
-          next.baselines[key] = {
-            '1W': weekClose ?? null,
-            '1M': monthClose ?? null
-          };
-        } catch (err) {
-          // If any symbol hard-fails with a 403, assume plan restriction and back off.
-          if (is403(err)) throw err;
+      try {
+        const json = await fetchDailyCandles(tabId, spec);
+        const closes = parseCloses(json);
+        const { weekClose, monthClose } = computeBaselinesFromCloses(closes);
 
-          // Otherwise, just skip this symbol.
-          next.baselines[key] = next.baselines[key] || { '1W': null, '1M': null };
-        }
+        next.baselines[k] = {
+          '1W': weekClose ?? null,
+          '1M': monthClose ?? null
+        };
 
-        if (i < list.length - 1) await sleep(REQUEST_SPACING_MS);
+        if (weekClose != null || monthClose != null) anySuccess = true;
+      } catch (err) {
+        // Best-effort: keep existing baselines if present; otherwise set nulls.
+        next.baselines[k] = next.baselines[k] || { '1W': null, '1M': null };
+        next.lastError = String(err?.message || err || 'Baseline fetch failed');
       }
 
-      next.fetchedAtMs = nowMs();
-      save(tabId, next);
-      return true;
-    } catch (err) {
-      const blockedUntilMs = nowMs() + BLOCK_COOLDOWN_MS;
-      save(tabId, {
-        ...disk,
-        blockedUntilMs,
-        lastError: String(err?.message || err || 'Blocked')
-      });
-      return false;
+      if (i < list.length - 1) await sleep(REQUEST_SPACING_MS);
     }
+
+    next.fetchedAtMs = nowMs();
+    save(tabId, next);
+
+    // ✅ Return true even if partial, to avoid UI forcing back to 1D
+    return anySuccess || true;
   }
 };
