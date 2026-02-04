@@ -1,12 +1,4 @@
 // src/data/quoteService.js
-//
-// Overview tiles use QUOTES for last price + 1D change.
-// Sparkline uses TwelveData intraday time_series cached by intradayService.
-//
-// % change by timeframe:
-// - 1D: Finnhub quote dp/pc when available.
-// - 1W/1M: computed via rangeChangeService baselines (daily series).
-
 import { apiClient } from './apiClient.js';
 import { storage } from './storage.js';
 import { TIMEFRAMES } from './candleService.js';
@@ -17,8 +9,8 @@ const QUOTE_CACHE_PREFIX = 'macrodb:quotes:v1:'; // + tabId
 const QUOTE_TTL_MS = 2 * 60 * 1000;
 const REQUEST_SPACING_MS = 120;
 
-const memTabs = new Map(); // tabId -> Map(symbolKey -> record)
-const inflight = new Map(); // `${tabId}:${symbolKey}` -> Promise<boolean>
+const memTabs = new Map();
+const inflight = new Map();
 
 function nowMs() {
   return Date.now();
@@ -69,10 +61,10 @@ function pctChange(from, to) {
   return ((to - from) / from) * 100;
 }
 
-// ✅ FIX: intradayService caches "candles", not "bars"
+// ✅ FIX: intradayService caches { candles }, not { bars }
 function sparkFromIntradayCache(tabId, symbol) {
   const cached = intradayService.getCached(tabId, symbol, '1D');
-  const arr = cached?.candles || cached?.bars || [];
+  const arr = cached?.candles || [];
   if (!Array.isArray(arr) || arr.length < 2) return [];
   return arr.map((b) => ({ t: b.t, c: b.c }));
 }
@@ -101,24 +93,28 @@ export const quoteService = {
     const last = isFiniteNum(rec?.last) ? rec.last : null;
     const q = rec?.quote || null;
 
+    const prevClose = isFiniteNum(q?.pc) ? q.pc : null;
+
     let changePct = null;
 
     if (last != null) {
       if (timeframe === TIMEFRAMES.ONE_DAY) {
         if (isFiniteNum(q?.dp)) changePct = q.dp;
-        else if (isFiniteNum(q?.pc) && q.pc !== 0) changePct = pctChange(q.pc, last);
+        else if (prevClose != null && prevClose !== 0) changePct = pctChange(prevClose, last);
       } else if (timeframe === TIMEFRAMES.ONE_WEEK || timeframe === TIMEFRAMES.ONE_MONTH) {
+        // ✅ These baselines are trading-session based:
+        // 1W ≈ 5 trading sessions ago
+        // 1M ≈ 21 trading sessions ago
         const baseline = rangeChangeService.getBaselineClose(tabId, spec, timeframe);
         if (baseline != null) changePct = pctChange(baseline, last);
       }
     }
 
-    const spark = sparkFromIntradayCache(tabId, spec.symbol);
-
     return {
       last,
+      prevClose,
       changePct,
-      spark,
+      spark: sparkFromIntradayCache(tabId, spec.symbol),
       logoUrl: fixedLogoUrl(spec)
     };
   },
