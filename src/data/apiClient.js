@@ -7,8 +7,7 @@ const FINNHUB_KEYS = {
   global: 'd4d73mhr01qovljoddigd4d73mhr01qovljoddj0',
   metals: 'd5s6af9r01qoo9r2t3a0d5s6af9r01qoo9r2t3ag ',
   commods: 'd5s6af9r01qoo9r2t3a0d5s6af9r01qoo9r2t3ag ',
-  rates: 'd5s6jg1r01qoo9r2ukugd5s6jg1r01qoo9r2ukv0',
-  calendar: 'd5s6jg1r01qoo9r2ukugd5s6jg1r01qoo9r2ukv0'
+  rates: 'd5s6jg1r01qoo9r2ukugd5s6jg1r01qoo9r2ukv0'
 };
 
 function tokenFor(tabId) {
