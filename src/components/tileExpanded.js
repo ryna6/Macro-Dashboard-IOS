@@ -23,14 +23,13 @@ function setActiveBtn(row, range) {
 export function openTileExpanded({
   tabId,
   symbolSpec,
-  symbol,
   displayName,
   initialRange = '1D',
   onClose
 }) {
-  const sym = String(symbolSpec?.symbol || symbol || '').toUpperCase();
+  const sym = String(symbolSpec?.symbol || '').toUpperCase();
   const name = displayName || symbolSpec?.name || sym;
-  const keyName = tabId || symbolSpec?.tabId || 'global';
+  const keyName = tabId;
 
   if (activeModal) {
     activeModal.destroy();
@@ -73,9 +72,11 @@ export function openTileExpanded({
     b.textContent = label;
     return b;
   };
+
   const b1d = mkRangeBtn('1D');
   const b1w = mkRangeBtn('1W');
   const b1m = mkRangeBtn('1M');
+
   rangeRow.appendChild(b1d);
   rangeRow.appendChild(b1w);
   rangeRow.appendChild(b1m);
@@ -103,15 +104,39 @@ export function openTileExpanded({
   function setLoading(msg) {
     chartWrap.innerHTML = '';
     const box = el('div', 'tile-modal-empty');
-    box.innerHTML = `<div>${msg || 'Loading…'}</div>`;
+    box.textContent = msg || 'Loading…';
     chartWrap.appendChild(box);
   }
 
   function setError(msg) {
     chartWrap.innerHTML = '';
     const box = el('div', 'tile-modal-empty');
-    box.innerHTML = `<div>${msg || 'Could not load OHLC data.'}</div>`;
+    box.textContent = msg || 'Could not load OHLC data.';
     chartWrap.appendChild(box);
+  }
+
+  function render(candles) {
+    if (destroyed) return;
+
+    if (!Array.isArray(candles) || candles.length < 2) {
+      setError('No OHLC data available for this range.');
+      ohlc.textContent = 'No OHLC data available.';
+      return;
+    }
+
+    chartWrap.innerHTML = '';
+    chart = renderCandlestickChart(chartWrap, candles, {
+      onHoverCandle: (bar) => {
+        if (!bar) {
+          ohlc.textContent = 'Hold & drag on the chart to inspect OHLC';
+          return;
+        }
+        const timeStr = nyTime.formatTime(bar.time);
+        ohlc.textContent =
+          `O ${fmt2(bar.open)}   H ${fmt2(bar.high)}   ` +
+          `L ${fmt2(bar.low)}   C ${fmt2(bar.close)}   • ${timeStr} ET`;
+      }
+    });
   }
 
   async function loadRange(range, { force = false } = {}) {
@@ -120,47 +145,17 @@ export function openTileExpanded({
     currentRange = range;
     setActiveBtn(rangeRow, range);
 
-    try {
-      controller?.abort?.();
-    } catch (_) {}
+    try { controller?.abort?.(); } catch (_) {}
     controller = new AbortController();
 
-    try {
-      chart?.destroy?.();
-    } catch (_) {}
+    try { chart?.destroy?.(); } catch (_) {}
     chart = null;
 
     ohlc.textContent = 'Loading OHLC…';
     setLoading('Loading OHLC…');
 
-    let cached = null;
-    try {
-      cached = intradayService.getCached(keyName, sym, range);
-    } catch (_) {}
-
-    const render = (candles) => {
-      if (destroyed) return;
-      if (!Array.isArray(candles) || candles.length < 2) {
-        setError('No OHLC data available for this range.');
-        ohlc.textContent = 'No OHLC data available.';
-        return;
-      }
-
-      chartWrap.innerHTML = '';
-      chart = renderCandlestickChart(chartWrap, candles, {
-        onHoverCandle: (bar) => {
-          if (!bar) {
-            ohlc.textContent = 'Hold & drag on the chart to inspect OHLC';
-            return;
-          }
-          const timeStr = nyTime.formatTime(bar.time);
-          ohlc.textContent =
-            `O ${fmt2(bar.open)}   H ${fmt2(bar.high)}   ` +
-            `L ${fmt2(bar.low)}   C ${fmt2(bar.close)}   • ${timeStr} ET`;
-        }
-      });
-    };
-
+    // Show cached immediately if available
+    const cached = intradayService.getCached(keyName, sym, range);
     if (cached?.candles?.length) render(cached.candles);
 
     try {
@@ -171,9 +166,8 @@ export function openTileExpanded({
         ohlc.textContent = 'Showing cached data (failed to refresh).';
         return;
       }
-      const msg = String(err?.message || 'Could not load OHLC data.');
-      setError(msg);
-      ohlc.textContent = msg;
+      setError(String(err?.message || 'Could not load OHLC data.'));
+      ohlc.textContent = 'Could not load OHLC data.';
     }
   }
 
@@ -189,18 +183,13 @@ export function openTileExpanded({
 
   function destroy() {
     destroyed = true;
-    try {
-      controller?.abort?.();
-    } catch (_) {}
-    try {
-      chart?.destroy?.();
-    } catch (_) {}
+    try { controller?.abort?.(); } catch (_) {}
+    try { chart?.destroy?.(); } catch (_) {}
     overlay.remove();
     activeModal = null;
   }
 
   activeModal = { destroy };
-
   loadRange(currentRange, { force: false });
 
   return activeModal;
