@@ -116,8 +116,6 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   root.appendChild(mid);
   root.appendChild(spark);
 
-  let refreshing = false;
-
   function paint() {
     const snap = quoteService.getSnapshot(tabId, symbolSpec, timeframe);
 
@@ -147,24 +145,6 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
     drawSpark(spark, (snap.spark || []).slice(-120));
   }
 
-  function refreshIfNeeded() {
-    if (refreshing) return;
-    refreshing = true;
-    quoteService
-      .ensureFreshSymbol(tabId, symbolSpec, { force: false })
-      .then((changed) => {
-        if (changed) paint();
-      })
-      .finally(() => {
-        refreshing = false;
-      });
-  }
-
-  function update() {
-    paint();
-    refreshIfNeeded();
-  }
-
   function expand() {
     const candles = candleService.getCandles(tabId, symbolSpec, timeframe);
     openTileExpanded({
@@ -176,19 +156,23 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   }
 
   root.addEventListener('click', () => {
-    update();
+    paint();
     expand();
   });
 
   root.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      update();
+      paint();
       expand();
     }
   });
 
-  update();
+  // IMPORTANT: paint-only on mount (no network). Network refresh is driven by:
+  // - app open refreshAllTabs()
+  // - manual refresh button (active tab)
+  // - auto refresh timer (active tab, only while visible)
+  paint();
 
-  return { el: root, update };
+  return { el: root, update: paint };
 }
