@@ -159,6 +159,16 @@ body {
 
 .dd-item:active { background: rgba(255, 255, 255, 0.08); }
 
+.dd-item.is-disabled,
+.dd-item:disabled {
+  opacity: 0.35;
+}
+
+.dd-item:disabled:active {
+  background: transparent;
+}
+
+
 /* (3) Refresh button + spinner */
 .refresh-btn {
   border: 0;
