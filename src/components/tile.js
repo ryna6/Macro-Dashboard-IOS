@@ -1,4 +1,3 @@
-// src/components/tile.js
 import { quoteService } from '../data/quoteService.js';
 import { openTileExpanded } from './tileExpanded.js';
 
@@ -21,7 +20,7 @@ function fmtPct(x) {
   return `${sign}${x.toFixed(2)}%`;
 }
 
-function drawSpark(canvas, points) {
+function drawSpark(canvas, points, prevClose) {
   const ctx = canvas?.getContext?.('2d');
   if (!ctx) return;
 
@@ -35,20 +34,37 @@ function drawSpark(canvas, points) {
     .filter((v) => Number.isFinite(v));
   if (closes.length < 2) return;
 
-  const min = Math.min(...closes);
-  const max = Math.max(...closes);
+  // include prevClose in scale so the line is visible
+  const hasPrev = Number.isFinite(prevClose);
+  const min = Math.min(...closes, ...(hasPrev ? [prevClose] : []));
+  const max = Math.max(...closes, ...(hasPrev ? [prevClose] : []));
   const range = max - min || 1;
 
+  const yFor = (v) => h - ((v - min) / range) * (h - 2) - 1;
+
+  // Prev close horizontal line
+  if (hasPrev) {
+    const y = yFor(prevClose);
+    ctx.save();
+    ctx.setLineDash([3, 3]);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.30)';
+    ctx.beginPath();
+    ctx.moveTo(1, y);
+    ctx.lineTo(w - 1, y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Price line
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-
   closes.forEach((v, i) => {
     const x = (i / (closes.length - 1)) * (w - 2) + 1;
-    const y = h - ((v - min) / range) * (h - 2) - 1;
+    const y = yFor(v);
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   });
-
   ctx.strokeStyle = 'rgba(255,255,255,0.65)';
   ctx.stroke();
 }
@@ -76,7 +92,6 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
   img.alt = '';
   img.decoding = 'async';
   img.loading = 'lazy';
-
   img.style.width = '100%';
   img.style.height = '100%';
   img.style.objectFit = 'contain';
@@ -134,11 +149,10 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
 
     const pct = snap.changePct;
     change.textContent = fmtPct(pct);
-
     change.classList.toggle('is-up', pct != null && pct > 0);
     change.classList.toggle('is-down', pct != null && pct < 0);
 
-    drawSpark(spark, (snap.spark || []).slice(-240));
+    drawSpark(spark, (snap.spark || []).slice(-240), snap.prevClose);
   }
 
   function expand() {
