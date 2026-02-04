@@ -138,6 +138,7 @@ async function fetchTimeSeriesWithFallbacks({ tabId, symbol, range, signal }) {
     attempts.push({ interval: '5min', outputsize: 600 }); // no date fallback
   } else if (range === '1W') {
     attempts.push({ interval: '15min', outputsize: 1200 });
+    attempts.push({ interval: '30min', outputsize: 1200 });
   } else {
     attempts.push({ interval: '2h', outputsize: 1600 });
     attempts.push({ interval: '4h', outputsize: 1600 });
