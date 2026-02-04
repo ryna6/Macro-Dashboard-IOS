@@ -11,11 +11,11 @@ const TWELVEDATA_BASE = 'https://api.twelvedata.com';
 // Mirror your Finnhub key mapping style: one key per tab.
 // Fill these with your own keys (or replace with env injection if you later add a backend).
 const TWELVEDATA_KEYS = {
-  global: '',  // Tab 1
-  metals: '',  // Tab 2
-  commo: '',   // Tab 3
-  rates: '',   // Tab 4
-  calendar: '' // Tab 5 (not used unless you add TwelveData calendar endpoints)
+  global: 'c06be89dbb3f483eb8d5b126139bc91d',
+  metals: 'aceb4424b004438ab40f83483b8e418f',
+  commods: 'aceb4424b004438ab40f83483b8e418f',
+  rates: 'f50fcec0077b420ebf43941663ab81a4',
+  calendar: '' // Not used unless you add TwelveData calendar endpoints
 };
 
 function tokenFor(tabId) {
