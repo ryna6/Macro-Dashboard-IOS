@@ -142,7 +142,7 @@ export function createTile({ tabId, symbolSpec, timeframe }) {
     change.classList.toggle('is-up', pct != null && pct > 0);
     change.classList.toggle('is-down', pct != null && pct < 0);
 
-    drawSpark(spark, (snap.spark || []).slice(-120));
+    drawSpark(spark, (snap.spark || []).slice(-240));
   }
 
   function expand() {
