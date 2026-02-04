@@ -27,7 +27,7 @@ export const macroConfig = {
       ]
     },
     {
-      id: 'commo',
+      id: 'commods',
       kind: 'macro',
       shortName: 'Commods',
       longName: 'Commodities',
