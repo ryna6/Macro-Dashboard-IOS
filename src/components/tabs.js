@@ -16,17 +16,44 @@ function el(tag, className) {
 
 export function initTabsApp(mountEl) {
   const state = {
-    activeTabId: macroConfig.tabs[0].id, // default = Global
+    activeTabId: macroConfig.tabs[0].id, // default = first tab
     timeframe: TIMEFRAMES.ONE_DAY
   };
 
   const app = el('div', 'app');
 
+  let refreshing = false;
+  let queuedRefresh = null; // { force, reason }
+
   const header = createHeader({
     onTimeframeChange: (tf) => {
       state.timeframe = tf;
       header.setActiveTf(tf);
+
+      // Render immediately from cache. If 1W/1M needs baselines, fetch them in the background.
       rerenderActive();
+
+      const tab = macroConfig.tabs.find((t) => t.id === state.activeTabId);
+      if (tab?.kind === 'macro' && tf !== TIMEFRAMES.ONE_DAY) {
+        quoteService
+          .ensureRangeBaselines(tab.id, tab.symbols, { force: false })
+          .then((ok) => {
+            // If candles are blocked, we disable 1W/1M and fall back to 1D.
+            const enabled = quoteService.isTimeframeEnabled(tab.id, TIMEFRAMES.ONE_WEEK);
+            header.setTimeframeOptionEnabled(TIMEFRAMES.ONE_WEEK, enabled);
+            header.setTimeframeOptionEnabled(TIMEFRAMES.ONE_MONTH, enabled);
+
+            if (!ok && state.timeframe !== TIMEFRAMES.ONE_DAY) {
+              state.timeframe = TIMEFRAMES.ONE_DAY;
+              header.setActiveTf(state.timeframe);
+            }
+
+            rerenderActive();
+          })
+          .catch(() => {
+            // ignore
+          });
+      }
     },
     onRefresh: async () => {
       await refreshActiveTab({ force: true, reason: 'manual' });
@@ -73,9 +100,6 @@ export function initTabsApp(mountEl) {
   mountEl.innerHTML = '';
   mountEl.appendChild(app);
 
-  let refreshing = false;
-  let queuedRefresh = null; // { force, reason }
-
   // Calendar wiring
   let calendar = null;
   function ensureCalendarInit() {
@@ -102,6 +126,24 @@ export function initTabsApp(mountEl) {
     });
   }
 
+  function applyTimeframeAvailability(tabId) {
+    const canWeek = quoteService.isTimeframeEnabled(tabId, TIMEFRAMES.ONE_WEEK);
+    const canMonth = quoteService.isTimeframeEnabled(tabId, TIMEFRAMES.ONE_MONTH);
+
+    header.setTimeframeOptionEnabled(TIMEFRAMES.ONE_WEEK, canWeek);
+    header.setTimeframeOptionEnabled(TIMEFRAMES.ONE_MONTH, canMonth);
+
+    // If current selection isn't available, fall back to 1D.
+    if (state.timeframe === TIMEFRAMES.ONE_WEEK && !canWeek) {
+      state.timeframe = TIMEFRAMES.ONE_DAY;
+      header.setActiveTf(state.timeframe);
+    }
+    if (state.timeframe === TIMEFRAMES.ONE_MONTH && !canMonth) {
+      state.timeframe = TIMEFRAMES.ONE_DAY;
+      header.setActiveTf(state.timeframe);
+    }
+  }
+
   function updateHeaderForActiveTab() {
     const tab = macroConfig.tabs.find((t) => t.id === state.activeTabId);
     header.setTabLongName(tab?.longName || '—');
@@ -112,6 +154,8 @@ export function initTabsApp(mountEl) {
     } else {
       header.setTimeframeVisible(true);
       header.setActiveTf(state.timeframe);
+
+      applyTimeframeAvailability(tab.id);
       header.setLastUpdated(quoteService.getTabLastUpdatedMs(state.activeTabId));
     }
   }
@@ -133,13 +177,14 @@ export function initTabsApp(mountEl) {
   }
 
   async function refreshActiveTab({ force = false, reason = 'auto' } = {}) {
-    const requestedTabId = state.activeTabId;
+    const tabId = state.activeTabId;
+
     if (refreshing) {
       queuedRefresh = { force, reason };
       return;
     }
 
-    const tab = macroConfig.tabs.find((t) => t.id === requestedTabId);
+    const tab = macroConfig.tabs.find((t) => t.id === tabId);
     if (!tab) return;
 
     refreshing = true;
@@ -147,7 +192,7 @@ export function initTabsApp(mountEl) {
 
     try {
       if (tab.kind === 'macro') {
-        await quoteService.prefetchTab(tab.id, tab.symbols, { reason, force });
+        await quoteService.prefetchTab(tab.id, tab.symbols, { force });
         if (state.activeTabId === tab.id) {
           header.setLastUpdated(quoteService.getTabLastUpdatedMs(tab.id));
           rerenderActive();
@@ -164,9 +209,32 @@ export function initTabsApp(mountEl) {
       if (queuedRefresh) {
         const next = queuedRefresh;
         queuedRefresh = null;
-        if (state.activeTabId !== requestedTabId) {
-          refreshActiveTab(next);
+        // Always refresh the CURRENT active tab with the queued intent.
+        refreshActiveTab(next);
+      }
+    }
+  }
+
+  // Refresh ALL tabs once (startup behavior).
+  // - Active tab runs "loud" (spinner + rerender)
+  // - Other tabs run silently to populate cache without spamming UI or tab switching.
+  async function refreshAllTabs({ force = true, reason = 'startup' } = {}) {
+    await refreshActiveTab({ force, reason });
+
+    const active = state.activeTabId;
+
+    for (const tab of macroConfig.tabs) {
+      if (tab.id === active) continue;
+
+      try {
+        if (tab.kind === 'macro') {
+          await quoteService.prefetchTab(tab.id, tab.symbols, { force });
+        } else {
+          ensureCalendarInit();
+          await calendar?.refresh?.({ force: true });
         }
+      } catch {
+        // ignore per-tab failures
       }
     }
   }
@@ -178,14 +246,7 @@ export function initTabsApp(mountEl) {
     updateHeaderForActiveTab();
     rerenderActive();
 
-    const tab = macroConfig.tabs.find((t) => t.id === tabId);
-    if (tab?.kind === 'macro') {
-      const last = quoteService.getTabLastUpdatedMs(tabId);
-      const STALE_ON_ACTIVATE_MS = 30 * 1000;
-      if (!last || (Date.now() - last) > STALE_ON_ACTIVATE_MS) {
-        refreshActiveTab({ force: false, reason: 'tab-activate' });
-      }
-    }
+    // IMPORTANT: no refresh on tab switch (prevents API spam).
   }
 
   // initial view
@@ -193,13 +254,48 @@ export function initTabsApp(mountEl) {
 
   return {
     startAutoRefresh() {
-      refreshActiveTab({ force: false, reason: 'startup' });
+      let intervalId = null;
+      let disposed = false;
 
-      const id = setInterval(() => {
-        refreshActiveTab({ force: false, reason: 'timer' });
-      }, FIVE_MIN_MS);
+      const stopInterval = () => {
+        if (intervalId) clearInterval(intervalId);
+        intervalId = null;
+      };
 
-      return () => clearInterval(id);
+      const startInterval = () => {
+        if (intervalId) return;
+        intervalId = setInterval(() => {
+          if (document.visibilityState !== 'visible') return;
+          refreshActiveTab({ force: false, reason: 'timer' });
+        }, FIVE_MIN_MS);
+      };
+
+      const onVisibility = () => {
+        if (document.visibilityState === 'visible') {
+          startInterval();
+          // optional: refresh on resume (respects quote TTL)
+          refreshActiveTab({ force: false, reason: 'resume' });
+        } else {
+          stopInterval();
+        }
+      };
+
+      document.addEventListener('visibilitychange', onVisibility);
+
+      // Startup: refresh ALL tabs once. Only start interval AFTER this finishes.
+      refreshAllTabs({ force: true, reason: 'startup' }).finally(() => {
+        if (disposed) return;
+        if (document.visibilityState === 'visible') startInterval();
+      });
+
+      // Also respect initial visibility state.
+      if (document.visibilityState !== 'visible') stopInterval();
+
+      return () => {
+        disposed = true;
+        stopInterval();
+        document.removeEventListener('visibilitychange', onVisibility);
+      };
     }
   };
 }
