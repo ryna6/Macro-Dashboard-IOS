@@ -1,6 +1,8 @@
 import { renderCandlestickChart } from './candlestickChart.js';
 import { nyTime } from '../data/time.js';
 import { intradayService } from '../data/intradayService.js';
+import { quoteService } from '../data/quoteService.js';
+import { TIMEFRAMES } from '../data/candleService.js';
 
 let activeModal = null;
 
@@ -24,12 +26,11 @@ export function openTileExpanded({
   tabId,
   symbolSpec,
   displayName,
-  initialRange = '1D',
+  initialRange = TIMEFRAMES.ONE_DAY,
   onClose
 }) {
   const sym = String(symbolSpec?.symbol || '').toUpperCase();
   const name = displayName || symbolSpec?.name || sym;
-  const keyName = tabId;
 
   if (activeModal) {
     activeModal.destroy();
@@ -54,7 +55,6 @@ export function openTileExpanded({
   const closeBtn = el('button', 'tile-modal-close');
   closeBtn.type = 'button';
   closeBtn.textContent = 'Close';
-
   closeBtn.addEventListener('click', () => {
     destroy();
     onClose?.();
@@ -65,7 +65,7 @@ export function openTileExpanded({
 
   // Range row
   const rangeRow = el('div', 'tile-modal-ranges');
-  const mkRangeBtn = (label) => {
+  const mk = (label) => {
     const b = el('button', 'tile-modal-rangebtn');
     b.type = 'button';
     b.dataset.range = label;
@@ -73,9 +73,9 @@ export function openTileExpanded({
     return b;
   };
 
-  const b1d = mkRangeBtn('1D');
-  const b1w = mkRangeBtn('1W');
-  const b1m = mkRangeBtn('1M');
+  const b1d = mk(TIMEFRAMES.ONE_DAY);
+  const b1w = mk(TIMEFRAMES.ONE_WEEK);
+  const b1m = mk(TIMEFRAMES.ONE_MONTH);
 
   rangeRow.appendChild(b1d);
   rangeRow.appendChild(b1w);
@@ -98,8 +98,11 @@ export function openTileExpanded({
 
   let chart = null;
   let destroyed = false;
-  let currentRange = String(initialRange || '1D');
   let controller = null;
+  let currentRange = initialRange;
+
+  const snap = quoteService.getSnapshot(tabId, symbolSpec, TIMEFRAMES.ONE_DAY);
+  const prevClose = Number.isFinite(snap?.prevClose) ? snap.prevClose : null;
 
   function setLoading(msg) {
     chartWrap.innerHTML = '';
@@ -126,6 +129,7 @@ export function openTileExpanded({
 
     chartWrap.innerHTML = '';
     chart = renderCandlestickChart(chartWrap, candles, {
+      prevClose,
       onHoverCandle: (bar) => {
         if (!bar) {
           ohlc.textContent = 'Hold & drag on the chart to inspect OHLC';
@@ -139,7 +143,7 @@ export function openTileExpanded({
     });
   }
 
-  async function loadRange(range, { force = false } = {}) {
+  async function loadRange(range) {
     if (destroyed) return;
 
     currentRange = range;
@@ -151,19 +155,20 @@ export function openTileExpanded({
     try { chart?.destroy?.(); } catch (_) {}
     chart = null;
 
-    ohlc.textContent = 'Loading OHLC…';
     setLoading('Loading OHLC…');
+    ohlc.textContent = 'Loading OHLC…';
 
-    // Show cached immediately if available
-    const cached = intradayService.getCached(keyName, sym, range);
+    // show cached immediately (if exists)
+    const cached = intradayService.getCached(tabId, sym, range);
     if (cached?.candles?.length) render(cached.candles);
 
     try {
-      const fresh = await intradayService.fetch(keyName, sym, range, { force, signal: controller.signal });
+      // ✅ intradayService enforces cooldowns internally
+      const fresh = await intradayService.fetch(tabId, sym, range, { force: false, signal: controller.signal });
       render(fresh?.candles || []);
     } catch (err) {
       if (cached?.candles?.length) {
-        ohlc.textContent = 'Showing cached data (failed to refresh).';
+        ohlc.textContent = 'Showing cached data.';
         return;
       }
       setError(String(err?.message || 'Could not load OHLC data.'));
@@ -174,7 +179,7 @@ export function openTileExpanded({
   function onRangeClick(e) {
     const r = e?.currentTarget?.dataset?.range;
     if (!r || r === currentRange) return;
-    loadRange(r, { force: false });
+    loadRange(r);
   }
 
   b1d.addEventListener('click', onRangeClick);
@@ -190,7 +195,7 @@ export function openTileExpanded({
   }
 
   activeModal = { destroy };
-  loadRange(currentRange, { force: false });
+  loadRange(currentRange);
 
   return activeModal;
 }
