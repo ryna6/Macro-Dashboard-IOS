@@ -23,10 +23,7 @@ function tfLabel(tf) {
   return '1M';
 }
 
-export function createHeader({
-  onTimeframeChange,
-  onRefresh
-} = {}) {
+export function createHeader({ onTimeframeChange, onRefresh } = {}) {
   const root = el('header', 'app-header');
 
   // Macro Dashboard (largest)
@@ -56,15 +53,23 @@ export function createHeader({
     { tf: TIMEFRAMES.ONE_MONTH, label: '1M' }
   ];
 
+  const tfButtons = new Map(); // tf -> button
+
   tfItems.forEach((it) => {
     const b = el('button', 'dd-item');
     b.type = 'button';
     b.textContent = it.label;
-    b.addEventListener('click', () => {
+    b.dataset.tf = it.tf;
+
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (b.disabled) return;
       tfMenu.hidden = true;
       onTimeframeChange?.(it.tf);
     });
+
     tfMenu.appendChild(b);
+    tfButtons.set(it.tf, b);
   });
 
   tfBtn.addEventListener('click', (e) => {
@@ -109,7 +114,6 @@ export function createHeader({
   root.appendChild(row);
   root.appendChild(updated);
 
-  let timeframeVisible = true;
   let activeTf = TIMEFRAMES.ONE_DAY;
 
   function setActiveTf(tf) {
@@ -118,8 +122,14 @@ export function createHeader({
   }
 
   function setTimeframeVisible(visible) {
-    timeframeVisible = visible;
     tfDD.style.display = visible ? 'block' : 'none';
+  }
+
+  function setTimeframeOptionEnabled(tf, enabled) {
+    const b = tfButtons.get(tf);
+    if (!b) return;
+    b.disabled = !enabled;
+    b.classList.toggle('is-disabled', !enabled);
   }
 
   function setTabLongName(name) {
@@ -139,11 +149,15 @@ export function createHeader({
   // defaults
   setActiveTf(activeTf);
   setTimeframeVisible(true);
+  setTimeframeOptionEnabled(TIMEFRAMES.ONE_DAY, true);
+  setTimeframeOptionEnabled(TIMEFRAMES.ONE_WEEK, true);
+  setTimeframeOptionEnabled(TIMEFRAMES.ONE_MONTH, true);
 
   return {
     el: root,
     setActiveTf,
     setTimeframeVisible,
+    setTimeframeOptionEnabled,
     setTabLongName,
     setLastUpdated,
     setRefreshing
