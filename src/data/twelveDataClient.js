@@ -1,65 +1,29 @@
-// src/data/twelveDataClient.js
-// Minimal Twelve Data REST wrapper (used as a fallback provider when Finnhub candles are restricted).
-//
-// Notes on credits/rate-limits:
-// - Twelve Data counts credits per *symbol* even when batching multiple symbols in one request.
-// - The free/basic plan is commonly listed as 8 credits/minute and 800 credits/day (see Twelve Data support).
-// - This app intentionally requests only small daily windows for 1W/1M baselines.
-
 const TWELVEDATA_BASE = 'https://api.twelvedata.com';
 
-// Mirror your Finnhub key mapping style: one key per tab.
-// Fill these with your own keys (or replace with env injection if you later add a backend).
 const TWELVEDATA_KEYS = {
   global: 'c06be89dbb3f483eb8d5b126139bc91d',
   metals: 'aceb4424b004438ab40f83483b8e418f',
   commods: 'aceb4424b004438ab40f83483b8e418f',
   rates: 'f50fcec0077b420ebf43941663ab81a4',
-  calendar: '' // Not used unless you add TwelveData calendar endpoints
 };
 
 function tokenFor(tabId) {
-  const key = String(tabId || '').trim();
-  const token = (TWELVEDATA_KEYS[key] || '').trim();
-  if (!token) throw new Error(`Missing Twelve Data API key for tab "${key}".`);
+  const token = (TWELVEDATA_KEYS[String(tabId)] || '').trim();
+  if (!token) throw new Error(`Missing Twelve Data API key for tab "${tabId}".`);
   return token;
-}
-
-function buildUrl(path, params = {}, tabId) {
-  const token = tokenFor(tabId);
-  const url = new URL(`${TWELVEDATA_BASE}${path}`);
-  url.searchParams.set('apikey', token);
-
-  Object.entries(params).forEach(([k, v]) => {
-    if (v === undefined || v === null || v === '') return;
-    url.searchParams.set(k, String(v));
-  });
-
-  return url.toString();
 }
 
 async function fetchJson(url, { signal } = {}) {
   const res = await fetch(url, { signal, cache: 'no-store' });
-  const text = await res.text().catch(() => '');
-  let data = null;
+  const data = await res.json().catch(() => ({}));
 
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { raw: text };
-  }
-
-  // Twelve Data typically returns 200 with status="error" in JSON
   const status = String(data?.status || '').toLowerCase();
   if (!res.ok || status === 'error') {
-    const msg = data?.message || data?.error || `Twelve Data HTTP ${res.status} ${res.statusText}`;
-    const err = new Error(msg);
+    const err = new Error(data?.message || `TwelveData HTTP ${res.status}`);
     err.status = res.status;
-    err.url = url;
     err.data = data;
     throw err;
   }
-
   return data;
 }
 
@@ -67,27 +31,26 @@ export const twelveDataClient = {
   async timeSeries({
     keyName,
     symbol,
-    interval = '1day',
-    outputsize = 30,
+    interval,
+    outputsize,
+    date,
     start_date,
     end_date,
     timezone,
     signal
   }) {
-    const url = buildUrl(
-      '/time_series',
-      {
-        symbol,
-        interval,
-        outputsize,
-        start_date,
-        end_date,
-        timezone,
-        format: 'JSON'
-      },
-      keyName
-    );
+    const url = new URL(`${TWELVEDATA_BASE}/time_series`);
+    url.searchParams.set('apikey', tokenFor(keyName));
+    url.searchParams.set('symbol', symbol);
+    url.searchParams.set('interval', interval);
 
-    return fetchJson(url, { signal });
+    if (outputsize) url.searchParams.set('outputsize', String(outputsize));
+    if (date) url.searchParams.set('date', String(date));
+    if (start_date) url.searchParams.set('start_date', String(start_date));
+    if (end_date) url.searchParams.set('end_date', String(end_date));
+    if (timezone) url.searchParams.set('timezone', String(timezone));
+    url.searchParams.set('format', 'JSON');
+
+    return fetchJson(url.toString(), { signal });
   }
 };
