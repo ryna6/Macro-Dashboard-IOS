@@ -14,11 +14,7 @@ import { rangeChangeService } from './rangeChangeService.js';
 import { intradayService } from './intradayService.js';
 
 const QUOTE_CACHE_PREFIX = 'macrodb:quotes:v1:'; // + tabId
-
-// Staleness
-const QUOTE_TTL_MS = 2 * 60 * 1000; // 2 minutes
-
-// Light spacing when prefetching whole tabs
+const QUOTE_TTL_MS = 2 * 60 * 1000;
 const REQUEST_SPACING_MS = 120;
 
 const memTabs = new Map(); // tabId -> Map(symbolKey -> record)
@@ -73,12 +69,12 @@ function pctChange(from, to) {
   return ((to - from) / from) * 100;
 }
 
-// Convert cached intraday OHLC bars -> spark points
+// ✅ FIX: intradayService caches "candles", not "bars"
 function sparkFromIntradayCache(tabId, symbol) {
   const cached = intradayService.getCached(tabId, symbol, '1D');
-  const bars = cached?.bars;
-  if (!Array.isArray(bars) || bars.length < 2) return [];
-  return bars.map((b) => ({ t: b.t, c: b.c }));
+  const arr = cached?.candles || cached?.bars || [];
+  if (!Array.isArray(arr) || arr.length < 2) return [];
+  return arr.map((b) => ({ t: b.t, c: b.c }));
 }
 
 export const quoteService = {
@@ -117,7 +113,6 @@ export const quoteService = {
       }
     }
 
-    // ✅ Sparkline now comes from TwelveData intraday cache (not quote refresh history)
     const spark = sparkFromIntradayCache(tabId, spec.symbol);
 
     return {
