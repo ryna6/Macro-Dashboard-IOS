@@ -32,10 +32,10 @@ export const macroConfig = {
       shortName: 'Commods',
       longName: 'Commodities',
       symbols: [
-        { type: 'stock', symbol: 'USO', name: 'Crude Oil' },
-        { type: 'stock', symbol: 'BNO', name: 'Brent Oil' },
-        { type: 'stock', symbol: 'UNG', name: 'Natural Gas' },
-        { type: 'stock', symbol: 'CPER', name: 'Copper' }
+        { type: 'stock', symbol: 'USO', name: 'Crude Oil ETF' },
+        { type: 'stock', symbol: 'BNO', name: 'Brent Oil ETF' },
+        { type: 'stock', symbol: 'UNG', name: 'Natural Gas ETF' },
+        { type: 'stock', symbol: 'CPER', name: 'Copper ETF' }
       ]
     },
     {
@@ -44,11 +44,11 @@ export const macroConfig = {
       shortName: 'Bonds',
       longName: 'US & Corporate Bonds',
       symbols: [
-        { type: 'stock', symbol: 'SHY', name: '1-3Y Treasury Bond' },
-        { type: 'stock', symbol: 'IEF', name: '7-10Y Treasury Bond' },
-        { type: 'stock', symbol: 'TLT', name: '20Y+ Treasury Bond' },
-        { type: 'stock', symbol: 'HYG', name: 'High Risk Corp Bond' },
-        { type: 'stock', symbol: 'LQD', name: 'Low Risk Corp Bond' },
+        { type: 'stock', symbol: 'SHY', name: '1-3Y Treasury Bond ETF' },
+        { type: 'stock', symbol: 'IEF', name: '7-10Y Treasury Bond ETF' },
+        { type: 'stock', symbol: 'TLT', name: '20Y+ Treasury Bond ETF' },
+        { type: 'stock', symbol: 'HYG', name: 'High Risk Corp Bond ETF' },
+        { type: 'stock', symbol: 'LQD', name: 'Low Risk Corp Bond ETF' },
         { type: 'stock', symbol: 'UUP', name: 'US Dollar Index' }
       ]
     },
